@@ -2,20 +2,29 @@ using MyGameConsole.Models;
 
 namespace MyGameConsole.Services;
 
+/// <summary>Estado real de cada ajuste do Modo Game no Windows. Nulo = não foi possível ler.</summary>
+public sealed record GameModeStatus(
+    bool? TaskbarHidden,
+    bool? DesktopIconsHidden,
+    bool? WallpaperApplied,
+    bool? WakePasswordSkipped);
+
 /// <summary>
 /// "Modo Game": conjunto de ajustes de área de trabalho que ficam aplicados de forma persistente
-/// (barra auto-ocultar, ícones escondidos, papel de parede do console). O estado original é
+/// (barra auto-ocultar, ícones escondidos, papel de parede do console, sem senha ao acordar). O estado original é
 /// guardado ao ativar e restaurado ao desativar; ao iniciar o app, os ajustes são reaplicados.
 /// </summary>
 public sealed class GameModeService
 {
     private readonly SettingsService _settings;
     private readonly DesktopTweaksService _tweaks;
+    private readonly PowerService _power;
 
-    public GameModeService(SettingsService settings, DesktopTweaksService tweaks)
+    public GameModeService(SettingsService settings, DesktopTweaksService tweaks, PowerService power)
     {
         _settings = settings;
         _tweaks = tweaks;
+        _power = power;
     }
 
     public bool IsEnabled => _settings.Current.GameModeEnabled;
@@ -36,7 +45,7 @@ public sealed class GameModeService
 
         try
         {
-            Apply(s);
+            Apply(s, interactive: true);
         }
         finally
         {
@@ -73,11 +82,53 @@ public sealed class GameModeService
         else Enable();
     }
 
-    /// <summary>Chamado no início do app: garante que os ajustes continuem valendo após reiniciar.</summary>
-    public void ReapplyIfEnabled()
+    /// <summary>
+    /// Reaplica os ajustes: no início do app (para valerem após reiniciar) e quando as opções mudam.
+    /// <paramref name="interactive"/> falso é o caso do início do app: nada que peça UAC (senha ao acordar)
+    /// é tentado, para não incomodar a cada boot; o checklist mostra o que ficou pendente.
+    /// </summary>
+    public void ReapplyIfEnabled(bool interactive = true)
     {
         if (!IsEnabled) return;
-        Apply(_settings.Current);
+        Apply(_settings.Current, interactive);
+    }
+
+    // ------------------------------------------------------------------
+    // Checklist: o que está de fato aplicado no Windows agora
+    // ------------------------------------------------------------------
+
+    /// <summary>Estado real de cada ajuste no Windows, para a tela de checklist do Modo Game.</summary>
+    public GameModeStatus Inspect() => new(
+        TaskbarHidden: SafeRead(() => _tweaks.IsTaskbarAutoHide),
+        DesktopIconsHidden: SafeRead(() => _tweaks.AreDesktopIconsHidden),
+        WallpaperApplied: SafeRead(IsWallpaperApplied),
+        WakePasswordSkipped: SafeRead(() => !_power.IsWakePasswordRequiredAnywhere()));
+
+    private static bool? SafeRead(Func<bool> read)
+    {
+        try { return read(); }
+        catch { return null; }
+    }
+
+    /// <summary>O papel de parede atual é o do Modo Game (o escolhido pelo usuário, o que vem com o app ou a reserva gerada).</summary>
+    private bool IsWallpaperApplied()
+    {
+        var current = _tweaks.GetWallpaper().Path;
+        if (string.IsNullOrEmpty(current) || _tweaks.BackgroundType != DesktopTweaksService.BackgroundPicture) return false;
+
+        var custom = _settings.Current.GameModeWallpaperPath;
+        if (!string.IsNullOrWhiteSpace(custom) && File.Exists(custom)) return SamePath(current, custom);
+
+        return SamePath(current, _tweaks.DefaultWallpaperPath)
+            || (Path.GetFileName(current).StartsWith("wallpaper_v", StringComparison.OrdinalIgnoreCase)
+                && SamePath(Path.GetDirectoryName(current), _settings.Directory));
+    }
+
+    private static bool SamePath(string? a, string? b)
+    {
+        if (a is null || b is null) return false;
+        try { return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase); }
+        catch { return false; }
     }
 
     // ------------------------------------------------------------------
@@ -93,14 +144,22 @@ public sealed class GameModeService
             BackgroundType = _tweaks.BackgroundType,
             TaskbarAutoHide = _tweaks.IsTaskbarAutoHide,
             DesktopIconsHidden = _tweaks.AreDesktopIconsHidden,
+            WakePasswordByScheme = TryReadWakePassword(),
         };
+    }
+
+    /// <summary>Nulo se o Windows recusar a leitura; a aplicação tenta de novo antes de mexer no ajuste.</summary>
+    private Dictionary<string, WakePasswordState>? TryReadWakePassword()
+    {
+        try { return _power.GetWakePasswordByScheme(); }
+        catch { return null; }
     }
 
     /// <summary>
     /// Aplica cada ajuste ligado; para os desligados, devolve o valor original (se houver backup).
     /// Falhas individuais não impedem os demais ajustes.
     /// </summary>
-    private void Apply(AppSettings s)
+    private void Apply(AppSettings s, bool interactive)
     {
         var backup = s.GameModeBackup;
         var errors = new List<string>();
@@ -129,6 +188,20 @@ public sealed class GameModeService
             }
         });
 
+        Try(errors, "senha ao acordar", () =>
+        {
+            // Backups de versões antigas (ou cuja leitura falhou) não têm o valor original: guarda agora, antes de mexer.
+            if (backup is not null && backup.WakePasswordByScheme is null)
+            {
+                var original = _power.GetWakePasswordByScheme();
+                _settings.Update(_ => backup.WakePasswordByScheme = original);
+            }
+
+            // Gravar exige administrador (UAC). Se não for permitido agora, fica pendente no checklist.
+            if (s.GameModeSkipPasswordOnWake) _power.SetWakePasswordRequired(false, allowElevation: interactive);
+            else if (backup?.WakePasswordByScheme is { } states) _power.RestoreWakePassword(states, allowElevation: interactive);
+        });
+
         if (errors.Count > 0)
         {
             throw new InvalidOperationException("Modo Game aplicado com problemas: " + string.Join("; ", errors));
@@ -142,6 +215,10 @@ public sealed class GameModeService
         Try(errors, "barra de tarefas", () => _tweaks.SetTaskbarAutoHide(backup.TaskbarAutoHide));
         Try(errors, "ícones da área de trabalho", () => _tweaks.SetDesktopIconsHidden(backup.DesktopIconsHidden));
         Try(errors, "papel de parede", () => RestoreWallpaper(backup));
+        Try(errors, "senha ao acordar", () =>
+        {
+            if (backup.WakePasswordByScheme is { } states) _power.RestoreWakePassword(states, allowElevation: true);
+        });
 
         if (errors.Count > 0)
         {

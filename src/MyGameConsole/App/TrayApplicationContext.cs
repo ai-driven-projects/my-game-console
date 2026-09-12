@@ -45,7 +45,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _controllers = new ControllerService(_settings);
         _steam = new SteamService(_settings);
         _consoleMode = new ConsoleModeService(_settings, _shell, _steam);
-        _gameMode = new GameModeService(_settings, _tweaks);
+        _gameMode = new GameModeService(_settings, _tweaks, _power);
         _controllerCombo = new ControllerComboService(_controllers);
 
         _tray = new NotifyIcon
@@ -87,8 +87,9 @@ public sealed class TrayApplicationContext : ApplicationContext
         SyncControllerCombo();
         Poll();
 
-        // Modo Game é persistente: reaplica os ajustes a cada início (inclusive após reiniciar o PC).
-        Safe(_gameMode.ReapplyIfEnabled);
+        // Modo Game é persistente: reaplica os ajustes a cada início (inclusive após reiniciar o PC),
+        // sem pedir UAC: o que exigir administrador aparece como pendente no checklist da tela do console.
+        Safe(() => _gameMode.ReapplyIfEnabled(interactive: false));
 
         if (_settings.Current.OpenBigPictureOnStart)
         {
@@ -290,8 +291,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         SyncStartupRegistration();
         RegisterHotkey();
         SyncControllerCombo();
-        // Se as opções do Modo Game mudaram enquanto ele está ativo, aplica na hora.
-        Safe(_gameMode.ReapplyIfEnabled);
+        // Se as opções do Modo Game mudaram enquanto ele está ativo, aplica na hora (o usuário está na tela: pode pedir UAC).
+        Safe(() => _gameMode.ReapplyIfEnabled(interactive: true));
         UpdateTrayText();
     }
 

@@ -22,7 +22,13 @@ Se `dotnet` não estiver no PATH da sessão, use `C:\Program Files\dotnet\dotnet
 - Ao mexer no Modo Console, garanta que `explorer.exe` seja restaurado em qualquer caminho de saída.
 - "Modo Game" (`GameModeService`) é persistente por design: guarda o estado original em `AppSettings.GameModeBackup`
   ao ativar, reaplica no início do app e só restaura ao desativar. Novos ajustes de desktop entram em
-  `DesktopTweaksService` e são ligados/desligados em `GameModeService.Apply`/`Restore`.
+  `DesktopTweaksService` e são ligados/desligados em `GameModeService.Apply`/`Restore`. Todo ajuste novo
+  também entra no checklist da tela do console (`Forms/ConsoleForm.GameMode.cs`, via `GameModeService.Inspect`).
+- Ajustes que exigem administrador (ex.: senha ao acordar, `PowerService`) só pedem UAC em ação do usuário
+  (`ReapplyIfEnabled(interactive: true)`); no início do app (`interactive: false`) ficam pendentes no checklist.
+  O UAC é obtido relançando o próprio exe elevado com `--wake-password` (tratado em `Program.cs`).
+- O que o app não consegue fazer sozinho (login automático, que exige a senha) vira item "para fazer à mão"
+  no checklist, com o estado lido do Windows e a tela certa aberta com A.
 - A tela do console (`Forms/ConsoleForm.cs`) é 100% desenhada em `OnPaint` e precisa continuar navegável
   só com controle: qualquer confirmação deve usar o overlay Sim/Não da própria tela, nunca `MessageBox`.
 

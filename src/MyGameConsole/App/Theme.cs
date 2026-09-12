@@ -12,6 +12,10 @@ public static class Theme
     public static readonly Color Muted = ColorTranslator.FromHtml("#8FA3B7");
     public static readonly Color Success = ColorTranslator.FromHtml("#4CAF50");
     public static readonly Color Danger = ColorTranslator.FromHtml("#E5484D");
+    /// <summary>Selo "pendente" no checklist: algo falta fazer.</summary>
+    public static readonly Color Warning = ColorTranslator.FromHtml("#E39B2B");
+    /// <summary>Selo de item desligado / neutro.</summary>
+    public static readonly Color PillOff = Color.FromArgb(90, 100, 110);
 
     /// <summary>Fonte de ícones do sistema (Fluent no Windows 11, MDL2 no Windows 10).</summary>
     public static string IconFontName { get; } = ResolveIconFont();

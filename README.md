@@ -15,11 +15,15 @@ esconder a área de trabalho, reagir à conexão de controles, atalhos rápidos 
   (A alterna/seleciona, ◀ ▶ ajusta, B volta), painel de descrição ao lado e salvamento imediato. Captura a
   tecla de atalho pelo teclado e o mapeamento dos botões HID pressionando o botão no próprio controle.
   A janela clássica (teclado/mouse) continua no menu da bandeja e no item "Avançado".
-- **Modo Game** (persistente): barra de tarefas em auto-ocultar, ícones da área de trabalho escondidos e
+- **Modo Game** (persistente): barra de tarefas em auto-ocultar, ícones da área de trabalho escondidos,
   papel de parede do console: a imagem `img/wallpaper.webp`, que vai junto com o app e com o instalador, ou
-  uma imagem sua (se o Windows não tiver o decodificador WebP, o app gera uma arte própria como reserva).
-  O papel de parede anterior é guardado e restaurado
-  ao desativar; ao ligar o PC, o app reaplica tudo (ativar o Modo Game também liga "Iniciar com o Windows").
+  uma imagem sua (se o Windows não tiver o decodificador WebP, o app gera uma arte própria como reserva),
+  e entrada sem senha ao acordar da suspensão (o mesmo que "Nunca" em Contas > Opções de entrada, aplicado
+  em todos os planos de energia; Win+L continua pedindo senha; gravar pede o UAC uma vez). O estado anterior
+  é guardado e restaurado ao desativar; ao ligar o PC, o app reaplica tudo (ativar o Modo Game também liga
+  "Iniciar com o Windows"). O tile "Modo Game" da tela do console abre um checklist: o estado real de cada
+  ajuste no Windows (aplicado, pendente, desligado) e os passos que só você pode fazer, como o login
+  automático ao ligar o PC (netplwiz) e a instalação do Steam, com A abrindo a tela certa do Windows.
 - **Modo Console**: esconde a barra de tarefas/área de trabalho (`explorer.exe`) e abre o Steam Big Picture.
   Ao desmarcar, ou ao sair do app, o shell do Windows é restaurado.
 - **Steam Big Picture**: abrir/fechar pelo menu ou com duplo clique no ícone. Detecção automática da
@@ -86,7 +90,7 @@ O que o instalador faz:
   Windows não consegue pedir para fechá-lo).
 - Ao desinstalar, remove a entrada em `HKCU\...\Run` e a tarefa agendada `MyGameConsole` criadas por
   "Iniciar com o Windows". As configurações em `%LocalAppData%\MyGameConsole` são mantidas, e os
-  ajustes do Modo Game (barra, ícones, papel de parede) devem ser desativados no app antes de desinstalar.
+  ajustes do Modo Game (barra, ícones, papel de parede, senha ao acordar) devem ser desativados no app antes de desinstalar.
 - Atualizações: instalar um MSI de versão maior substitui a anterior mantendo inicialização e configurações.
 
 O MSI e o executável não são assinados. Com o **Smart App Control** ligado (Windows 11), o Windows pode
@@ -140,6 +144,7 @@ src/MyGameConsole/
 ├── App/Theme.cs                  # cores, glifos e fonte de ícones
 ├── Forms/ConsoleForm.cs          # tela do console (launcher em tela cheia, controle/teclado/mouse)
 ├── Forms/ConsoleForm.Settings.cs # página de configurações dentro da tela do console
+├── Forms/ConsoleForm.GameMode.cs # página "Modo Game": checklist do que o app aplica e do que fazer à mão
 ├── Forms/SettingsForm.cs         # janela de configurações clássica (teclado/mouse)
 ├── Forms/ShortcutEditorForm.cs   # diálogo de atalho
 ├── Forms/UpdateForm.cs           # janela de atualização (notas da release, download, instalar)
@@ -158,7 +163,8 @@ src/MyGameConsole/
 │   ├── DesktopTweaksService.cs   # barra auto-ocultar, ícones, papel de parede
 │   ├── GameModeService.cs        # Modo Game persistente (backup/restauração)
 │   ├── HotkeyService.cs          # tecla de atalho global
-│   ├── PowerService.cs           # suspender/hibernar/reiniciar/desligar
+│   ├── LogonService.cs           # lê se o login automático (netplwiz) está ligado
+│   ├── PowerService.cs           # suspender/hibernar/reiniciar/desligar e senha ao acordar (por plano de energia)
 │   ├── StartupService.cs         # iniciar com o Windows
 │   └── UpdateService.cs          # verificar/baixar/instalar releases do GitHub
 └── Resources/app.ico

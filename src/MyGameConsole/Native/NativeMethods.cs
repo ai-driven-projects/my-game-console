@@ -94,6 +94,46 @@ internal static partial class NativeMethods
         [MarshalAs(UnmanagedType.Bool)] bool forceCritical,
         [MarshalAs(UnmanagedType.Bool)] bool disableWakeEvent);
 
+    // Configurações de energia por plano (as mesmas do powercfg / "Opções de entrada"). ERROR_SUCCESS está na seção XInput.
+    internal const uint ERROR_NO_MORE_ITEMS = 259;
+    internal const uint ACCESS_SCHEME = 16;
+
+    /// <summary>Subgrupo "sem subgrupo" (SUB_NONE), onde ficam os ajustes de nível do plano.</summary>
+    internal static readonly Guid GUID_NO_SUBGROUP = new("fea3413e-7e05-4911-9a71-700331f1c294");
+
+    /// <summary>"Exigir senha ao acordar" (CONSOLELOCK): 1 = exigir, 0 = entrar direto.</summary>
+    internal static readonly Guid GUID_LOCK_CONSOLE_ON_WAKE = new("0e796bdb-100d-47d6-a2d5-f7d2daa51f51");
+
+    [LibraryImport("powrprof.dll", EntryPoint = "PowerEnumerate")]
+    internal static partial uint PowerEnumerate(
+        IntPtr rootPowerKey, IntPtr schemeGuid, IntPtr subGroupOfPowerSettingsGuid,
+        uint accessFlags, uint index, out Guid buffer, ref uint bufferSize);
+
+    [LibraryImport("powrprof.dll", EntryPoint = "PowerGetActiveScheme")]
+    internal static partial uint PowerGetActiveScheme(IntPtr userRootPowerKey, out IntPtr activePolicyGuid);
+
+    [LibraryImport("powrprof.dll", EntryPoint = "PowerSetActiveScheme")]
+    internal static partial uint PowerSetActiveScheme(IntPtr userRootPowerKey, in Guid schemeGuid);
+
+    [LibraryImport("powrprof.dll", EntryPoint = "PowerReadACValueIndex")]
+    internal static partial uint PowerReadACValueIndex(
+        IntPtr rootPowerKey, in Guid schemeGuid, in Guid subGroupOfPowerSettingsGuid, in Guid powerSettingGuid, out uint acValueIndex);
+
+    [LibraryImport("powrprof.dll", EntryPoint = "PowerReadDCValueIndex")]
+    internal static partial uint PowerReadDCValueIndex(
+        IntPtr rootPowerKey, in Guid schemeGuid, in Guid subGroupOfPowerSettingsGuid, in Guid powerSettingGuid, out uint dcValueIndex);
+
+    [LibraryImport("powrprof.dll", EntryPoint = "PowerWriteACValueIndex")]
+    internal static partial uint PowerWriteACValueIndex(
+        IntPtr rootPowerKey, in Guid schemeGuid, in Guid subGroupOfPowerSettingsGuid, in Guid powerSettingGuid, uint acValueIndex);
+
+    [LibraryImport("powrprof.dll", EntryPoint = "PowerWriteDCValueIndex")]
+    internal static partial uint PowerWriteDCValueIndex(
+        IntPtr rootPowerKey, in Guid schemeGuid, in Guid subGroupOfPowerSettingsGuid, in Guid powerSettingGuid, uint dcValueIndex);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "LocalFree")]
+    internal static partial IntPtr LocalFree(IntPtr hMem);
+
     // ---------- XInput ----------
 
     [StructLayout(LayoutKind.Sequential)]

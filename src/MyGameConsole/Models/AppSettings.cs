@@ -71,6 +71,13 @@ public sealed class AppSettings
     /// <summary>Modo Game: aplicar o papel de parede do console.</summary>
     public bool GameModeApplyWallpaper { get; set; } = true;
 
+    /// <summary>
+    /// Modo Game: entrar direto ao acordar da suspensão/hibernação, sem pedir senha (como na inicialização
+    /// com login automático). Vale para todos os planos de energia. Bloquear com Win+L continua pedindo senha.
+    /// Gravar exige administrador: o app pede o UAC uma vez ao ligar/desligar (nunca no início do app).
+    /// </summary>
+    public bool GameModeSkipPasswordOnWake { get; set; } = true;
+
     /// <summary>Papel de parede personalizado do Modo Game. Vazio usa o papel padrão que vem com o app (wallpaper.webp).</summary>
     public string? GameModeWallpaperPath { get; set; }
 
@@ -111,4 +118,16 @@ public sealed class DesktopStateSnapshot
     public int? BackgroundType { get; set; }
     public bool TaskbarAutoHide { get; set; }
     public bool DesktopIconsHidden { get; set; }
+    /// <summary>
+    /// "Exigir senha ao acordar" de cada plano de energia (chave = GUID do plano).
+    /// Nulo em backups antigos: é preenchido na primeira reaplicação, antes de mexer no ajuste.
+    /// </summary>
+    public Dictionary<string, WakePasswordState>? WakePasswordByScheme { get; set; }
+}
+
+/// <summary>"Exigir senha ao acordar" de um plano de energia, na tomada e na bateria.</summary>
+public sealed class WakePasswordState
+{
+    public bool PluggedIn { get; set; } = true;
+    public bool OnBattery { get; set; } = true;
 }

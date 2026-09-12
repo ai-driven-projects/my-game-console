@@ -221,9 +221,9 @@ public sealed partial class ConsoleForm : Form
         {
             Glyph = Theme.GlyphGame,
             Title = "Modo Game",
-            Subtitle = "Barra oculta, ícones escondidos e papel de parede do console. Continua após reiniciar.",
+            Subtitle = "Checklist do que o app aplica (barra, ícones, papel de parede, senha ao acordar) e do que falta fazer à mão.",
             IsOn = () => _gameMode.IsEnabled,
-            OnSelect = ToggleGameMode,
+            OnSelect = OpenGameModePage,
         });
         system.Tiles.Add(new Tile
         {
@@ -310,11 +310,19 @@ public sealed partial class ConsoleForm : Form
 
     private void ToggleGameMode()
     {
-        _gameMode.Toggle();
-        ShowNotice(_gameMode.IsEnabled
-            ? "Modo Game ativado. Os ajustes continuam valendo após reiniciar."
-            : "Modo Game desativado. Área de trabalho restaurada.");
-        BuildTiles();
+        try
+        {
+            _gameMode.Toggle();
+            ShowNotice(_gameMode.IsEnabled
+                ? "Modo Game ativado. Os ajustes continuam valendo após reiniciar."
+                : "Modo Game desativado. Área de trabalho restaurada.");
+        }
+        finally
+        {
+            // Mesmo com falha parcial o estado mudou: a lista do checklist e o tile precisam refletir isso.
+            RebuildPage();
+            BuildTiles();
+        }
     }
 
     // ------------------------------------------------------------------

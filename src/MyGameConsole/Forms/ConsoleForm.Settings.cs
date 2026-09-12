@@ -27,6 +27,8 @@ public sealed partial class ConsoleForm
         public Action<int>? OnAdjust { get; init; }
         /// <summary>Texto extra (ao vivo) mostrado no painel de detalhes.</summary>
         public Func<string>? Extra { get; init; }
+        /// <summary>Selo de estado (ex.: APLICADO, PENDENTE) desenhado no lugar do LIGADO/DESLIGADO. Tem prioridade sobre IsOn e Value.</summary>
+        public Func<(string Text, Color Color)>? Status { get; init; }
         public RectangleF Bounds { get; set; }
     }
 
@@ -37,6 +39,9 @@ public sealed partial class ConsoleForm
     private int _itemScroll;
     private bool _settingsOpen;
     private string? _lastExtra;
+    // A mesma página (lista + painel) serve para Configurações e para o checklist do Modo Game.
+    private string _pageTitle = "CONFIGURAÇÕES";
+    private Action _pageBuilder = () => { };
 
     private CaptureKind _capture;
     private string _captureTitle = string.Empty;
@@ -52,13 +57,25 @@ public sealed partial class ConsoleForm
     // Abrir / fechar / salvar
     // ------------------------------------------------------------------
 
-    private void OpenSettingsPage()
+    private void OpenSettingsPage() => OpenPage("CONFIGURAÇÕES", BuildSettingsItems);
+
+    private void OpenPage(string title, Action builder)
     {
+        _pageTitle = title;
+        _pageBuilder = builder;
         _itemIndex = 0;
         _itemScroll = 0;
-        BuildSettingsItems();
+        builder();
         _settingsOpen = true;
         Invalidate();
+    }
+
+    /// <summary>Remonta a lista da página aberta (Configurações ou Modo Game) depois de uma mudança.</summary>
+    private void RebuildPage()
+    {
+        if (!_settingsOpen) return;
+        _pageBuilder();
+        _itemIndex = Math.Clamp(_itemIndex, 0, Math.Max(0, _items.Count - 1));
     }
 
     private void CloseSettingsPage()
@@ -71,7 +88,7 @@ public sealed partial class ConsoleForm
     private void SetSetting(Action<AppSettings> mutate)
     {
         _settings.Update(mutate);
-        BuildSettingsItems();
+        RebuildPage();
         Invalidate();
     }
 
@@ -145,6 +162,9 @@ public sealed partial class ConsoleForm
         Toggle("Aplicar papel de parede do console",
             "Usa o papel de parede padrão do app ou a imagem escolhida abaixo.",
             () => _settings.Current.GameModeApplyWallpaper, v => SetSetting(s => s.GameModeApplyWallpaper = v));
+        Toggle("Entrar sem senha ao acordar",
+            "Ao voltar da suspensão ou hibernação, o Windows entra direto, sem pedir senha (em todos os planos de energia). Bloquear com Win+L continua pedindo. Gravar pede confirmação do UAC uma vez.",
+            () => _settings.Current.GameModeSkipPasswordOnWake, v => SetSetting(s => s.GameModeSkipPasswordOnWake = v));
         _items.Add(new SettingItem
         {
             Title = "Imagem do papel de parede",
@@ -603,7 +623,7 @@ public sealed partial class ConsoleForm
         var bottomLeft = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Far };
         var center = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
 
-        g.DrawString("CONFIGURAÇÕES", pageFont, textBrush, mx, h * 0.15f);
+        g.DrawString(_pageTitle, pageFont, textBrush, mx, h * 0.15f);
 
         foreach (var it in _items) it.Bounds = RectangleF.Empty;
 
@@ -642,14 +662,15 @@ public sealed partial class ConsoleForm
             var titleRect = new RectangleF(rect.X + u * 2.4f, rect.Y, rect.Width - valueW - u * 4f, rect.Height);
             g.DrawString(it.Title, selected ? titleSelFont : titleFont, it.Danger ? dangerBrush : textBrush, titleRect, leftMid);
 
-            if (it.IsOn is not null)
+            if (it.Status is not null || it.IsOn is not null)
             {
-                bool on = it.IsOn();
-                var pillText = on ? "LIGADO" : "DESLIGADO";
+                var (pillText, pillColor) = it.Status is not null
+                    ? it.Status()
+                    : it.IsOn!() ? ("LIGADO", Theme.Success) : ("DESLIGADO", Theme.PillOff);
                 var size = g.MeasureString(pillText, pillFont);
                 float ph = size.Height + u * 0.8f;
                 var pill = new RectangleF(rect.Right - size.Width - u * 4.4f, rect.Y + (rowH - ph) / 2f, size.Width + u * 2.4f, ph);
-                using var pillBrush = new SolidBrush(on ? Theme.Success : Color.FromArgb(90, 100, 110));
+                using var pillBrush = new SolidBrush(pillColor);
                 using var pillPath = RoundedRect(pill, pill.Height / 2f);
                 g.FillPath(pillBrush, pillPath);
                 g.DrawString(pillText, pillFont, textBrush, pill, center);
