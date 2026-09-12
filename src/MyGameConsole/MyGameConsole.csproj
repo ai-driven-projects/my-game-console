@@ -12,18 +12,18 @@
     <RootNamespace>MyGameConsole</RootNamespace>
     <Product>My Game Console</Product>
     <Company>Leonardo</Company>
-    <!-- Versão do app (Major.Minor.Patch). É a fonte da versão do MSI, da tag da release (v1.0.0) e da checagem de atualização. -->
-    <Version>1.0.0</Version>
-    <!-- Sem o sufixo "+hash" na versão informativa: a versão exibida e comparada com as releases é só Major.Minor.Patch. -->
+    <!-- VersÃ£o do app (Major.Minor.Patch). Ã‰ a fonte da versÃ£o do MSI, da tag da release (v1.0.0) e da checagem de atualizaÃ§Ã£o. -->
+    <Version>1.0.0.1</Version>
+    <!-- Sem o sufixo "+hash" na versÃ£o informativa: a versÃ£o exibida e comparada com as releases Ã© sÃ³ Major.Minor.Patch. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <!-- Necessário para o gerador de código do LibraryImport (P/Invoke moderno). -->
+    <!-- NecessÃ¡rio para o gerador de cÃ³digo do LibraryImport (P/Invoke moderno). -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="Resources\app.ico" LogicalName="app.ico" />
-    <!-- Papel de parede padrão do Modo Game: vai junto com o app (e com o instalador). -->
+    <!-- Papel de parede padrÃ£o do Modo Game: vai junto com o app (e com o instalador). -->
     <Content Include="..\..\img\wallpaper.webp" Link="wallpaper.webp" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
