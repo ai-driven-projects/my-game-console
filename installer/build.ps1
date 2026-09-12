@@ -10,7 +10,7 @@ $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
 if ($null -eq $dotnet) { $dotnet = 'C:\Program Files\dotnet\dotnet.exe' } else { $dotnet = $dotnet.Source }
 
 $csproj = Join-Path $root 'src\MyGameConsole\MyGameConsole.csproj'
-$version = ([regex]::Match((Get-Content -Raw $csproj), '<Version>([^<]+)</Version>')).Groups[1].Value
+$version = ([regex]::Match([System.IO.File]::ReadAllText($csproj), '<Version>([^<]+)</Version>')).Groups[1].Value
 if ([string]::IsNullOrWhiteSpace($version)) { throw "Não encontrei <Version> em $csproj." }
 
 $publish = Join-Path $PSScriptRoot 'publish'

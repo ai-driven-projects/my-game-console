@@ -100,21 +100,25 @@ if ($branch -ne 'main') {
 }
 
 # --- Versão ------------------------------------------------------------------
-$content = Get-Content -Raw $csproj
+# Leitura explícita em UTF-8: o Get-Content do Windows PowerShell lê arquivos sem BOM como ANSI e corromperia os acentos.
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+$content = [System.IO.File]::ReadAllText($csproj, $utf8)
 $match = [regex]::Match($content, '<Version>([^<]+)</Version>')
 if (-not $match.Success) { throw "Não encontrei <Version> em $csproj." }
 $current = $match.Groups[1].Value.Trim()
 if ($current -notmatch '^\d+\.\d+\.\d+$') { throw "A versão atual no csproj ($current) não está no formato Major.Minor.Patch." }
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $parts = $current.Split('.') | ForEach-Object { [int]$_ }
+    $parts = [int[]]$current.Split('.')
+    # Atenção: a vírgula tem precedência sobre "+" no PowerShell, então cada soma precisa de parênteses.
     switch ($Bump) {
-        'major' { $parts = @($parts[0] + 1, 0, 0) }
-        'minor' { $parts = @($parts[0], $parts[1] + 1, 0) }
-        default { $parts = @($parts[0], $parts[1], $parts[2] + 1) }
+        'major' { $Version = '{0}.0.0' -f ($parts[0] + 1) }
+        'minor' { $Version = '{0}.{1}.0' -f $parts[0], ($parts[1] + 1) }
+        default { $Version = '{0}.{1}.{2}' -f $parts[0], $parts[1], ($parts[2] + 1) }
     }
-    $Version = $parts -join '.'
-} elseif ($Version -notmatch '^\d+\.\d+\.\d+$') {
+}
+
+if ($Version -notmatch '^\d+\.\d+\.\d+$') {
     throw "Versão inválida: '$Version'. Use o formato Major.Minor.Patch (ex.: 1.0.1)."
 }
 
@@ -134,7 +138,7 @@ Write-Host "== Versão: $current -> $Version (tag $tag) ==" -ForegroundColor Cya
 # --- csproj --------------------------------------------------------------------
 if ($Version -ne $current) {
     $updated = $content -replace '<Version>[^<]+</Version>', "<Version>$Version</Version>"
-    [System.IO.File]::WriteAllText($csproj, $updated, (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllText($csproj, $updated, $utf8)
 }
 
 # --- Instalador ----------------------------------------------------------------
@@ -150,7 +154,7 @@ if (-not (Test-Path $sha)) { throw "Arquivo de hash não encontrado: $sha" }
 
 # --- Notas ---------------------------------------------------------------------
 if ($NotesFile) {
-    $Notes = Get-Content -Raw $NotesFile
+    $Notes = [System.IO.File]::ReadAllText((Resolve-Path $NotesFile).Path, $utf8)
 } elseif ([string]::IsNullOrWhiteSpace($Notes)) {
     $previousTag = $null
     try { $previousTag = (& git -C $root describe --tags --abbrev=0 --match 'v*' 2>$null) } catch { }
@@ -165,7 +169,7 @@ if ($NotesFile) {
 }
 
 $notesPath = Join-Path ([System.IO.Path]::GetTempPath()) "MyGameConsole-release-$Version.md"
-[System.IO.File]::WriteAllText($notesPath, $Notes, (New-Object System.Text.UTF8Encoding($false)))
+[System.IO.File]::WriteAllText($notesPath, $Notes, $utf8)
 
 # --- Commit + tag --------------------------------------------------------------
 if ($Version -ne $current) {
