@@ -664,6 +664,8 @@ public sealed partial class ConsoleForm : Form
             DrawFooter(g, w, h);
         }
 
+        DrawVersion(g, w, h);
+
         if (_notice is not null)
         {
             if (DateTime.Now < _noticeUntil) DrawNotice(g, w, h);
@@ -888,6 +890,20 @@ public sealed partial class ConsoleForm : Form
             : $"Esc  Fechar   ·   Atalho: {hotkey}";
         var size = g.MeasureString(right, font);
         g.DrawString(right, font, mutedBrush, w - mx - size.Width, y + (u * 3.4f - size.Height) / 2f);
+    }
+
+    /// <summary>Versão do app, discreta, no canto inferior direito (abaixo do rodapé). Avisa quando há versão nova.</summary>
+    private void DrawVersion(Graphics g, int w, int h)
+    {
+        float u = h / 100f;
+        var text = _updates.Available is { } update
+            ? $"v{_updates.CurrentVersionText}   ·   {update.VersionText} disponível"
+            : $"v{_updates.CurrentVersionText}";
+
+        using var font = new Font("Segoe UI", u * 1.5f, GraphicsUnit.Pixel);
+        using var brush = new SolidBrush(_updates.Available is null ? Color.FromArgb(110, Theme.Muted) : Theme.Accent);
+        var size = g.MeasureString(text, font);
+        g.DrawString(text, font, brush, w - u * 2f - size.Width, h - u * 1.2f - size.Height);
     }
 
     private static float DrawHint(Graphics g, Font font, float x, float y, string button, string label, float u)
