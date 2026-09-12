@@ -1,0 +1,571 @@
+using System.Diagnostics;
+using System.Reflection;
+using MyGameConsole.Forms;
+using MyGameConsole.Models;
+using MyGameConsole.Services;
+
+namespace MyGameConsole.App;
+
+/// <summary>
+/// Contexto principal da aplicação: mantém o ícone na bandeja, o menu de contexto,
+/// a tecla de atalho global, a tela do console e o timer de monitoramento (controles, Steam).
+/// </summary>
+public sealed class TrayApplicationContext : ApplicationContext
+{
+    private const string AppTitle = "My Game Console";
+
+    private readonly SettingsService _settings = new();
+    private readonly SteamService _steam;
+    private readonly ControllerService _controllers;
+    private readonly ShellService _shell = new();
+    private readonly PowerService _power = new();
+    private readonly DisplayService _display = new();
+    private readonly KeyboardBacklightService _backlight = new();
+    private readonly StartupService _startup = new();
+    private readonly DesktopTweaksService _tweaks = new();
+    private readonly ConsoleModeService _consoleMode;
+    private readonly GameModeService _gameMode;
+    private readonly HotkeyService _hotkey = new();
+    private readonly ControllerComboService _controllerCombo;
+    private readonly UpdateService _updates = new();
+
+    private readonly NotifyIcon _tray;
+    private readonly ContextMenuStrip _menu = new();
+    private readonly System.Windows.Forms.Timer _pollTimer;
+    private readonly System.Windows.Forms.Timer _updateCheckTimer;
+
+    private SettingsForm? _settingsForm;
+    private ConsoleForm? _console;
+    private UpdateForm? _updateForm;
+    private bool _balloonOpensUpdate;
+
+    public TrayApplicationContext()
+    {
+        _settings.Load();
+        _controllers = new ControllerService(_settings);
+        _steam = new SteamService(_settings);
+        _consoleMode = new ConsoleModeService(_settings, _shell, _steam);
+        _gameMode = new GameModeService(_settings, _tweaks);
+        _controllerCombo = new ControllerComboService(_controllers);
+
+        _tray = new NotifyIcon
+        {
+            Icon = LoadAppIcon(),
+            Text = AppTitle,
+            Visible = true,
+            ContextMenuStrip = _menu,
+        };
+        _tray.DoubleClick += (_, _) => Safe(ShowConsole);
+        _tray.BalloonTipClicked += (_, _) => { if (_balloonOpensUpdate) { _balloonOpensUpdate = false; Safe(ShowUpdateForm); } };
+        _tray.BalloonTipClosed += (_, _) => _balloonOpensUpdate = false;
+        _menu.Opening += (_, _) => BuildMenu();
+
+        _consoleMode.StateChanged += (_, _) => UpdateTrayText();
+        _gameMode.StateChanged += (_, _) => UpdateTrayText();
+        _controllers.CountChanged += OnControllerCountChanged;
+        _settings.Changed += (_, _) => OnSettingsChanged();
+        _hotkey.Pressed += (_, _) => Safe(ShowConsole);
+        _controllerCombo.Triggered += (_, _) => OnControllerComboTriggered();
+
+        _pollTimer = new System.Windows.Forms.Timer { Interval = 2000 };
+        _pollTimer.Tick += (_, _) => Poll();
+        _pollTimer.Start();
+
+        // Verificação automática de atualização, alguns segundos após o início (não atrasa o boot nem o Big Picture).
+        _updateCheckTimer = new System.Windows.Forms.Timer { Interval = 20000 };
+        _updateCheckTimer.Tick += (_, _) =>
+        {
+            _updateCheckTimer.Stop();
+            if (_settings.Current.CheckForUpdatesOnStart) _ = CheckForUpdatesAsync(silent: true);
+        };
+        _updateCheckTimer.Start();
+
+        Application.ApplicationExit += (_, _) => OnAppExit();
+
+        SyncStartupRegistration();
+        RegisterHotkey();
+        SyncControllerCombo();
+        Poll();
+
+        // Modo Game é persistente: reaplica os ajustes a cada início (inclusive após reiniciar o PC).
+        Safe(_gameMode.ReapplyIfEnabled);
+
+        if (_settings.Current.OpenBigPictureOnStart)
+        {
+            Safe(_steam.OpenBigPicture);
+        }
+
+        if (_settings.Current.OpenLauncherOnStart)
+        {
+            Safe(ShowConsole);
+        }
+
+        _tray.ShowBalloonTip(3000, AppTitle, DescribeLauncherTriggers(), ToolTipIcon.Info);
+    }
+
+    /// <summary>Texto curto com as formas de abrir a tela do console (tecla e/ou gesto do controle).</summary>
+    private string DescribeLauncherTriggers()
+    {
+        var hotkey = _settings.Current.LauncherHotkey;
+        var triggers = new List<string>(2);
+        if (!string.IsNullOrWhiteSpace(hotkey)) triggers.Add($"pressione {hotkey}");
+        if (_settings.Current.OpenLauncherWithControllerCombo) triggers.Add("segure − e + (Back + Start) no controle");
+
+        return triggers.Count == 0
+            ? "Rodando na bandeja do sistema. Clique com o botão direito para ver as opções."
+            : $"Rodando na bandeja. Para abrir a tela do console, {string.Join(" ou ", triggers)}.";
+    }
+
+    // ------------------------------------------------------------------
+    // Menu
+    // ------------------------------------------------------------------
+
+    private void BuildMenu()
+    {
+        _menu.Items.Clear();
+
+        // Status
+        var steamStatus = !_steam.IsInstalled ? "Steam: não encontrado"
+            : _steam.IsBigPictureActive ? "Steam: Big Picture ativo"
+            : _steam.IsRunning ? "Steam: em execução"
+            : "Steam: fechado";
+
+        var padStatus = _controllers.ConnectedCount switch
+        {
+            0 => "Nenhum controle conectado",
+            1 => "1 controle conectado",
+            var n => $"{n} controles conectados",
+        };
+
+        _menu.Items.Add(new ToolStripMenuItem(steamStatus) { Enabled = false });
+        _menu.Items.Add(new ToolStripMenuItem(padStatus) { Enabled = false });
+        _menu.Items.Add(new ToolStripSeparator());
+
+        // Tela do console
+        var hotkey = _settings.Current.LauncherHotkey;
+        var openConsole = new ToolStripMenuItem(string.IsNullOrWhiteSpace(hotkey)
+            ? "Abrir tela do console"
+            : $"Abrir tela do console\t{hotkey}")
+        {
+            Font = new Font(_menu.Font, FontStyle.Bold),
+            ToolTipText = _settings.Current.OpenLauncherWithControllerCombo
+                ? "No controle: segure − e + (Back + Start) por meio segundo."
+                : null,
+        };
+        openConsole.Click += (_, _) => Safe(ShowConsole);
+        _menu.Items.Add(openConsole);
+
+        // Modo Game (persistente)
+        var gameMode = new ToolStripMenuItem("Modo Game")
+        {
+            Checked = _gameMode.IsEnabled,
+            ToolTipText = "Barra de tarefas auto-ocultar, ícones escondidos e papel de parede do console. " +
+                          "Fica aplicado mesmo após reiniciar; desmarque para restaurar a área de trabalho.",
+        };
+        gameMode.Click += (_, _) => Safe(_gameMode.Toggle);
+        _menu.Items.Add(gameMode);
+
+        // Modo Console (sem explorer)
+        var consoleItem = new ToolStripMenuItem("Modo Console (sem explorer)")
+        {
+            Checked = _consoleMode.IsActive,
+            CheckOnClick = false,
+            ToolTipText = "Encerra o explorer.exe e abre o Big Picture. Marque novamente para sair.",
+        };
+        consoleItem.Click += (_, _) => Safe(_consoleMode.Toggle);
+        _menu.Items.Add(consoleItem);
+
+        _menu.Items.Add(new ToolStripSeparator());
+
+        var bigPicture = new ToolStripMenuItem("Abrir Steam Big Picture") { Enabled = _steam.IsInstalled };
+        bigPicture.Click += (_, _) => Safe(_steam.OpenBigPicture);
+        _menu.Items.Add(bigPicture);
+
+        var closeBigPicture = new ToolStripMenuItem("Fechar Big Picture") { Enabled = _steam.IsBigPictureActive };
+        closeBigPicture.Click += (_, _) => Safe(_steam.CloseBigPicture);
+        _menu.Items.Add(closeBigPicture);
+
+        var shellItem = new ToolStripMenuItem(_shell.IsShellRunning
+            ? "Esconder barra de tarefas (explorer)"
+            : "Restaurar barra de tarefas (explorer)");
+        shellItem.Click += (_, _) => Safe(() =>
+        {
+            if (_shell.IsShellRunning) _shell.StopShell();
+            else _shell.StartShell();
+        });
+        _menu.Items.Add(shellItem);
+
+        _menu.Items.Add(new ToolStripSeparator());
+
+        // Atalhos personalizados
+        var shortcuts = _settings.Current.Shortcuts;
+        if (shortcuts.Count > 0)
+        {
+            var shortcutsMenu = new ToolStripMenuItem("Atalhos");
+            foreach (var sc in shortcuts)
+            {
+                var item = new ToolStripMenuItem(sc.Name) { ToolTipText = sc.Path };
+                item.Click += (_, _) => Safe(() => LaunchShortcut(sc));
+                shortcutsMenu.DropDownItems.Add(item);
+            }
+            _menu.Items.Add(shortcutsMenu);
+        }
+
+        // Energia
+        var powerMenu = new ToolStripMenuItem("Energia");
+        powerMenu.DropDownItems.Add("Suspender", null, (_, _) => Safe(_power.Sleep));
+        powerMenu.DropDownItems.Add("Hibernar", null, (_, _) => Safe(_power.Hibernate));
+        powerMenu.DropDownItems.Add(new ToolStripSeparator());
+        powerMenu.DropDownItems.Add("Reiniciar...", null, (_, _) => ConfirmThen("reiniciar o computador", _power.Restart));
+        powerMenu.DropDownItems.Add("Desligar...", null, (_, _) => ConfirmThen("desligar o computador", _power.Shutdown));
+        _menu.Items.Add(powerMenu);
+
+        _menu.Items.Add(new ToolStripSeparator());
+
+        // Opções rápidas
+        var startWithWindows = new ToolStripMenuItem("Iniciar com o Windows")
+        {
+            Checked = _settings.Current.StartWithWindows,
+        };
+        startWithWindows.Click += (_, _) =>
+            _settings.Update(s => s.StartWithWindows = !s.StartWithWindows);
+        _menu.Items.Add(startWithWindows);
+
+        var autoBp = new ToolStripMenuItem("Abrir Big Picture ao conectar controle")
+        {
+            Checked = _settings.Current.OpenBigPictureOnControllerConnect,
+        };
+        autoBp.Click += (_, _) =>
+            _settings.Update(s => s.OpenBigPictureOnControllerConnect = !s.OpenBigPictureOnControllerConnect);
+        _menu.Items.Add(autoBp);
+
+        _menu.Items.Add("Configurações...", null, (_, _) => ShowSettings());
+
+        // Atualização: vira "Atualizar para X" (em negrito) assim que uma versão nova é encontrada.
+        var update = _updates.Available;
+        var updateItem = new ToolStripMenuItem(update is null
+            ? $"Verificar atualizações...\tv{_updates.CurrentVersionText}"
+            : $"Atualizar para a versão {update.VersionText}...")
+        {
+            Enabled = !_updates.IsBusy || update is not null,
+            ToolTipText = _updates.StatusText,
+        };
+        if (update is not null) updateItem.Font = new Font(_menu.Font, FontStyle.Bold);
+        updateItem.Click += (_, _) =>
+        {
+            if (_updates.Available is not null) Safe(ShowUpdateForm);
+            else _ = CheckForUpdatesAsync(silent: false);
+        };
+        _menu.Items.Add(updateItem);
+
+        _menu.Items.Add(new ToolStripSeparator());
+        _menu.Items.Add("Sair", null, (_, _) => ExitApplication());
+    }
+
+    // ------------------------------------------------------------------
+    // Monitoramento
+    // ------------------------------------------------------------------
+
+    private void Poll()
+    {
+        _controllers.Poll();
+        UpdateTrayText();
+    }
+
+    private void OnControllerCountChanged(int oldCount, int newCount)
+    {
+        if (newCount > oldCount)
+        {
+            if (_settings.Current.OpenBigPictureOnControllerConnect
+                && oldCount == 0
+                && _steam.IsInstalled
+                && !_steam.IsBigPictureActive)
+            {
+                Safe(_steam.OpenBigPicture);
+            }
+        }
+    }
+
+    private void UpdateTrayText()
+    {
+        var mode = _consoleMode.IsActive ? "Modo Console"
+            : _gameMode.IsEnabled ? "Modo Game"
+            : "Modo Desktop";
+        var pads = _controllers.ConnectedCount;
+        var text = $"{AppTitle} — {mode}\n{pads} controle(s)";
+        // NotifyIcon.Text tem limite de 127 caracteres.
+        _tray.Text = text.Length > 127 ? text[..127] : text;
+    }
+
+    private void OnSettingsChanged()
+    {
+        SyncStartupRegistration();
+        RegisterHotkey();
+        SyncControllerCombo();
+        // Se as opções do Modo Game mudaram enquanto ele está ativo, aplica na hora.
+        Safe(_gameMode.ReapplyIfEnabled);
+        UpdateTrayText();
+    }
+
+    // ------------------------------------------------------------------
+    // Ações auxiliares
+    // ------------------------------------------------------------------
+
+    private void ShowConsole()
+    {
+        if (_console is null || _console.IsDisposed)
+        {
+            _console = new ConsoleForm(
+                _settings, _steam, _gameMode, _power, _display, _backlight, _controllers, _updates,
+                openSettings: ShowSettings,
+                launchShortcut: LaunchShortcut,
+                exitApp: ExitApplication,
+                restartElevated: RestartElevated);
+        }
+
+        _console.ShowLauncher();
+    }
+
+    private static void LaunchShortcut(AppShortcut sc)
+    {
+        if (string.IsNullOrWhiteSpace(sc.Path))
+        {
+            throw new InvalidOperationException($"O atalho \"{sc.Name}\" não tem caminho configurado.");
+        }
+
+        var workingDirectory = File.Exists(sc.Path) ? Path.GetDirectoryName(sc.Path) : null;
+        ProcessLauncher.Start(sc.Path, sc.Arguments, workingDirectory);
+    }
+
+    /// <summary>Reabre o app como administrador (UAC) e encerra esta instância.</summary>
+    private void RestartElevated()
+    {
+        var exe = Environment.ProcessPath
+            ?? throw new InvalidOperationException("Não foi possível determinar o caminho do executável.");
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(exe, $"--wait-for-pid {Environment.ProcessId}")
+            {
+                UseShellExecute = true,
+                Verb = "runas",
+                WorkingDirectory = Path.GetDirectoryName(exe),
+            });
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            throw new InvalidOperationException("Permissão recusada no UAC. O app continua sem privilégios.");
+        }
+
+        ExitApplication();
+    }
+
+    private void ShowSettings()
+    {
+        if (_settingsForm is { IsDisposed: false })
+        {
+            _settingsForm.Activate();
+            return;
+        }
+
+        _settingsForm = new SettingsForm(_settings, _steam, _controllers);
+        _settingsForm.FormClosed += (_, _) => _settingsForm = null;
+        _settingsForm.Show();
+        _settingsForm.Activate();
+    }
+
+    // ------------------------------------------------------------------
+    // Atualizações (releases no GitHub)
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Consulta a release mais recente. Em modo silencioso (início do app) só avisa se houver versão nova;
+    /// clicando no aviso, abre a janela de atualização. Em modo manual, sempre dá um retorno.
+    /// </summary>
+    private async Task CheckForUpdatesAsync(bool silent)
+    {
+        try
+        {
+            var info = await _updates.CheckAsync();
+
+            if (info is null)
+            {
+                if (!silent)
+                {
+                    _tray.ShowBalloonTip(4000, AppTitle,
+                        $"Você já está na versão mais recente ({_updates.CurrentVersionText}).", ToolTipIcon.Info);
+                }
+                return;
+            }
+
+            if (silent)
+            {
+                _balloonOpensUpdate = true;
+                _tray.ShowBalloonTip(10000, AppTitle,
+                    $"Nova versão {info.VersionText} disponível (instalada: {_updates.CurrentVersionText}). Clique aqui para atualizar.",
+                    ToolTipIcon.Info);
+            }
+            else
+            {
+                ShowUpdateForm();
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!silent) _tray.ShowBalloonTip(6000, AppTitle, ex.Message, ToolTipIcon.Warning);
+        }
+    }
+
+    private void ShowUpdateForm()
+    {
+        if (_updateForm is { IsDisposed: false })
+        {
+            _updateForm.Activate();
+            return;
+        }
+
+        _updateForm = new UpdateForm(_updates, ExitApplication);
+        _updateForm.FormClosed += (_, _) => _updateForm = null;
+        _updateForm.Show();
+        _updateForm.Activate();
+    }
+
+    private (bool Enabled, bool Elevated)? _startupSynced;
+
+    private void SyncStartupRegistration()
+    {
+        var wanted = (_settings.Current.StartWithWindows, _settings.Current.StartElevated);
+        if (_startupSynced == wanted) return; // evita consultar o Agendador a cada mudança de configuração
+
+        try
+        {
+            _startup.Set(wanted.Item1, wanted.Item2);
+            _startupSynced = wanted;
+        }
+        catch (Exception ex) when (wanted.Item2)
+        {
+            // Sem o aval do UAC não há tarefa elevada: volta para a inicialização comum e avisa.
+            _startupSynced = null;
+            _settings.Update(s => s.StartElevated = false);
+            _tray.ShowBalloonTip(6000, AppTitle,
+                $"{ex.Message} A inicialização com o Windows foi mantida sem privilégios de administrador.",
+                ToolTipIcon.Warning);
+        }
+        catch (Exception ex)
+        {
+            _tray.ShowBalloonTip(4000, AppTitle, ex.Message, ToolTipIcon.Error);
+        }
+    }
+
+    private void SyncControllerCombo()
+    {
+        _controllerCombo.Enabled = _settings.Current.OpenLauncherWithControllerCombo;
+    }
+
+    private void OnControllerComboTriggered()
+    {
+        // Com a tela já aberta, ela mesma trata o controle; o gesto só serve para abrir.
+        if (_console is { IsDisposed: false, Visible: true }) return;
+        Safe(ShowConsole);
+    }
+
+    private void RegisterHotkey()
+    {
+        var hotkey = _settings.Current.LauncherHotkey;
+        if (string.IsNullOrWhiteSpace(hotkey))
+        {
+            _hotkey.Unregister();
+            return;
+        }
+
+        if (string.Equals(hotkey, _hotkey.RegisteredHotkey, StringComparison.OrdinalIgnoreCase)) return;
+
+        if (!_hotkey.Register(hotkey))
+        {
+            _tray.ShowBalloonTip(4000, AppTitle,
+                $"Não foi possível registrar o atalho \"{hotkey}\". Ele pode ser inválido ou estar em uso por outro programa.",
+                ToolTipIcon.Warning);
+        }
+    }
+
+    private void ConfirmThen(string action, Action run)
+    {
+        var result = MessageBox.Show(
+            $"Tem certeza que deseja {action}?",
+            AppTitle,
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question,
+            MessageBoxDefaultButton.Button2);
+
+        if (result == DialogResult.Yes)
+        {
+            Safe(run);
+        }
+    }
+
+    private void Safe(Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception ex)
+        {
+            _tray.ShowBalloonTip(4000, AppTitle, ex.Message, ToolTipIcon.Error);
+        }
+    }
+
+    private void ExitApplication()
+    {
+        _pollTimer.Stop();
+        _updateCheckTimer.Stop();
+        _controllerCombo.Enabled = false;
+        _hotkey.Dispose();
+        _consoleMode.EnsureShellRestored();
+        _tray.Visible = false;
+        ExitThread();
+    }
+
+    private void OnAppExit()
+    {
+        _tray.Visible = false;
+        _tray.Dispose();
+    }
+
+    private static Icon LoadAppIcon()
+    {
+        try
+        {
+            using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("app.ico");
+            if (stream is not null)
+            {
+                return new Icon(stream);
+            }
+        }
+        catch
+        {
+            // cai no ícone padrão
+        }
+
+        return SystemIcons.Application;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _pollTimer.Dispose();
+            _updateCheckTimer.Dispose();
+            _updateForm?.Dispose();
+            _controllerCombo.Dispose();
+            _controllers.Dispose();
+            _hotkey.Dispose();
+            _menu.Dispose();
+            _tray.Dispose();
+            _settingsForm?.Dispose();
+            _console?.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
+}

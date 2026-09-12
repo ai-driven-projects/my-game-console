@@ -1,0 +1,328 @@
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace MyGameConsole.Native;
+
+internal static partial class NativeMethods
+{
+    // ---------- user32 ----------
+
+    [LibraryImport("user32.dll", EntryPoint = "FindWindowW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial IntPtr FindWindow(string? lpClassName, string? lpWindowName);
+
+    [LibraryImport("user32.dll", EntryPoint = "FindWindowExW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial IntPtr FindWindowEx(IntPtr hWndParent, IntPtr hWndChildAfter, string? lpszClass, string? lpszWindow);
+
+    [LibraryImport("user32.dll", EntryPoint = "ShowWindow")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [LibraryImport("user32.dll", EntryPoint = "SetForegroundWindow")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool SetForegroundWindow(IntPtr hWnd);
+
+    [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]
+    internal static partial IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [LibraryImport("user32.dll", EntryPoint = "RegisterHotKey")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [LibraryImport("user32.dll", EntryPoint = "UnregisterHotKey")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    [LibraryImport("user32.dll", EntryPoint = "SystemParametersInfoW", StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool SystemParametersInfo(uint uiAction, uint uiParam, string pvParam, uint fWinIni);
+
+    internal const int SW_HIDE = 0;
+    internal const int SW_SHOW = 5;
+    internal const int SW_RESTORE = 9;
+
+    internal const uint WM_COMMAND = 0x0111;
+    internal const uint WM_HOTKEY = 0x0312;
+
+    /// <summary>Comando do menu de contexto da área de trabalho: "Mostrar ícones da área de trabalho".</summary>
+    internal const int CMD_TOGGLE_DESKTOP_ICONS = 0x7402;
+
+    internal const uint MOD_ALT = 0x0001;
+    internal const uint MOD_CONTROL = 0x0002;
+    internal const uint MOD_SHIFT = 0x0004;
+    internal const uint MOD_WIN = 0x0008;
+    internal const uint MOD_NOREPEAT = 0x4000;
+
+    internal const uint SPI_SETDESKWALLPAPER = 0x0014;
+    internal const uint SPIF_UPDATEINIFILE = 0x0001;
+    internal const uint SPIF_SENDCHANGE = 0x0002;
+
+    // ---------- shell32 (barra de tarefas) ----------
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct AppBarData
+    {
+        public uint cbSize;
+        public IntPtr hWnd;
+        public uint uCallbackMessage;
+        public uint uEdge;
+        public RECT rc;
+        public IntPtr lParam;
+    }
+
+    internal const uint ABM_GETSTATE = 0x0004;
+    internal const uint ABM_SETSTATE = 0x000A;
+    internal const uint ABS_AUTOHIDE = 0x0001;
+
+    [LibraryImport("shell32.dll", EntryPoint = "SHAppBarMessage")]
+    internal static partial UIntPtr SHAppBarMessage(uint dwMessage, ref AppBarData pData);
+
+    // ---------- powrprof ----------
+
+    [LibraryImport("powrprof.dll", EntryPoint = "SetSuspendState")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool SetSuspendState(
+        [MarshalAs(UnmanagedType.Bool)] bool hibernate,
+        [MarshalAs(UnmanagedType.Bool)] bool forceCritical,
+        [MarshalAs(UnmanagedType.Bool)] bool disableWakeEvent);
+
+    // ---------- XInput ----------
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct XInputGamepad
+    {
+        public ushort Buttons;
+        public byte LeftTrigger;
+        public byte RightTrigger;
+        public short ThumbLX;
+        public short ThumbLY;
+        public short ThumbRX;
+        public short ThumbRY;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct XInputState
+    {
+        public uint PacketNumber;
+        public XInputGamepad Gamepad;
+    }
+
+    internal const ushort XINPUT_GAMEPAD_DPAD_UP = 0x0001;
+    internal const ushort XINPUT_GAMEPAD_DPAD_DOWN = 0x0002;
+    internal const ushort XINPUT_GAMEPAD_DPAD_LEFT = 0x0004;
+    internal const ushort XINPUT_GAMEPAD_DPAD_RIGHT = 0x0008;
+    internal const ushort XINPUT_GAMEPAD_START = 0x0010;
+    internal const ushort XINPUT_GAMEPAD_BACK = 0x0020;
+    internal const ushort XINPUT_GAMEPAD_A = 0x1000;
+    internal const ushort XINPUT_GAMEPAD_B = 0x2000;
+    internal const ushort XINPUT_GAMEPAD_X = 0x4000;
+    internal const ushort XINPUT_GAMEPAD_Y = 0x8000;
+
+    internal const uint ERROR_SUCCESS = 0;
+    internal const uint ERROR_DEVICE_NOT_CONNECTED = 1167;
+
+    [LibraryImport("xinput1_4.dll", EntryPoint = "XInputGetState")]
+    internal static partial uint XInputGetState(uint dwUserIndex, out XInputState pState);
+
+    // ---------- energia da tela (user32 / kernel32) ----------
+
+    internal const uint WM_SYSCOMMAND = 0x0112;
+    internal const int SC_MONITORPOWER = 0xF170;
+    internal const int MONITOR_OFF = 2;
+    internal const int MONITOR_ON = -1;
+
+    internal const uint ES_SYSTEM_REQUIRED = 0x00000001;
+    internal const uint ES_DISPLAY_REQUIRED = 0x00000002;
+    internal const uint ES_CONTINUOUS = 0x80000000;
+
+    internal const uint INPUT_MOUSE = 0;
+    internal const uint MOUSEEVENTF_MOVE = 0x0001;
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MouseInput
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    /// <summary>INPUT com a união reduzida a MOUSEINPUT (o maior membro), que é o único usado aqui.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Input
+    {
+        public uint type;
+        public MouseInput mi;
+    }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "SetThreadExecutionState")]
+    internal static partial uint SetThreadExecutionState(uint flags);
+
+    [LibraryImport("user32.dll", EntryPoint = "SendInput", SetLastError = true)]
+    internal static partial uint SendInput(uint count, [In] Input[] inputs, int size);
+
+    // ---------- ícones de executáveis (shell32 / user32) ----------
+
+    /// <summary>Extrai um ícone de um .exe/.dll/.ico no tamanho pedido (até 256 px). Retorna S_OK (0) em sucesso.</summary>
+    [LibraryImport("shell32.dll", EntryPoint = "SHDefExtractIconW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int SHDefExtractIcon(string iconFile, int iconIndex, uint flags, out IntPtr iconLarge, out IntPtr iconSmall, uint iconSize);
+
+    [LibraryImport("user32.dll", EntryPoint = "DestroyIcon")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool DestroyIcon(IntPtr icon);
+
+    // ---------- HID genérico (controles DirectInput, ex.: 8BitDo por Bluetooth) ----------
+
+    internal const uint GENERIC_READ = 0x80000000;
+    internal const uint FILE_SHARE_READ = 0x00000001;
+    internal const uint FILE_SHARE_WRITE = 0x00000002;
+    internal const uint OPEN_EXISTING = 3;
+    internal const uint THREAD_TERMINATE = 0x0001;
+
+    internal const uint CM_GET_DEVICE_INTERFACE_LIST_PRESENT = 1;
+    internal const int CR_SUCCESS = 0;
+    internal const int CR_BUFFER_SMALL = 0x1A;
+
+    internal const int HidP_Input = 0;
+    internal const int HIDP_STATUS_SUCCESS = 0x00110000;
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct HiddAttributes
+    {
+        public uint Size;
+        public ushort VendorId;
+        public ushort ProductId;
+        public ushort VersionNumber;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct HidpCaps
+    {
+        public ushort Usage;
+        public ushort UsagePage;
+        public ushort InputReportByteLength;
+        public ushort OutputReportByteLength;
+        public ushort FeatureReportByteLength;
+        public fixed ushort Reserved[17];
+        public ushort NumberLinkCollectionNodes;
+        public ushort NumberInputButtonCaps;
+        public ushort NumberInputValueCaps;
+        public ushort NumberInputDataIndices;
+        public ushort NumberOutputButtonCaps;
+        public ushort NumberOutputValueCaps;
+        public ushort NumberOutputDataIndices;
+        public ushort NumberFeatureButtonCaps;
+        public ushort NumberFeatureValueCaps;
+        public ushort NumberFeatureDataIndices;
+    }
+
+    /// <summary>HIDP_VALUE_CAPS (72 bytes). A união Range/NotRange é achatada: em NotRange, UsageMin é o Usage.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct HidpValueCaps
+    {
+        public ushort UsagePage;
+        public byte ReportID;
+        public byte IsAlias;
+        public ushort BitField;
+        public ushort LinkCollection;
+        public ushort LinkUsage;
+        public ushort LinkUsagePage;
+        public byte IsRange;
+        public byte IsStringRange;
+        public byte IsDesignatorRange;
+        public byte IsAbsolute;
+        public byte HasNull;
+        public byte Reserved;
+        public ushort BitSize;
+        public ushort ReportCount;
+        public fixed ushort Reserved2[5];
+        public uint UnitsExp;
+        public uint Units;
+        public int LogicalMin;
+        public int LogicalMax;
+        public int PhysicalMin;
+        public int PhysicalMax;
+        public ushort UsageMin;
+        public ushort UsageMax;
+        public ushort StringMin;
+        public ushort StringMax;
+        public ushort DesignatorMin;
+        public ushort DesignatorMax;
+        public ushort DataIndexMin;
+        public ushort DataIndexMax;
+    }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
+    internal static partial SafeFileHandle CreateFile(string fileName, uint desiredAccess, uint shareMode,
+        IntPtr securityAttributes, uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "ReadFile", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool ReadFile(SafeFileHandle handle, [Out] byte[] buffer, uint bytesToRead, out uint bytesRead, IntPtr overlapped);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "CancelSynchronousIo", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool CancelSynchronousIo(IntPtr thread);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "OpenThread", SetLastError = true)]
+    internal static partial IntPtr OpenThread(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint threadId);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetCurrentThreadId")]
+    internal static partial uint GetCurrentThreadId();
+
+    [LibraryImport("kernel32.dll", EntryPoint = "CloseHandle", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool CloseHandle(IntPtr handle);
+
+    [LibraryImport("cfgmgr32.dll", EntryPoint = "CM_Get_Device_Interface_List_SizeW")]
+    internal static partial int CM_Get_Device_Interface_List_Size(out uint length, in Guid interfaceClassGuid, IntPtr deviceId, uint flags);
+
+    [LibraryImport("cfgmgr32.dll", EntryPoint = "CM_Get_Device_Interface_ListW")]
+    internal static unsafe partial int CM_Get_Device_Interface_List(in Guid interfaceClassGuid, IntPtr deviceId, char* buffer, uint bufferLength, uint flags);
+
+    [LibraryImport("hid.dll", EntryPoint = "HidD_GetHidGuid")]
+    internal static partial void HidD_GetHidGuid(out Guid hidGuid);
+
+    [LibraryImport("hid.dll", EntryPoint = "HidD_GetPreparsedData")]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static partial bool HidD_GetPreparsedData(SafeFileHandle handle, out IntPtr preparsedData);
+
+    [LibraryImport("hid.dll", EntryPoint = "HidD_FreePreparsedData")]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static partial bool HidD_FreePreparsedData(IntPtr preparsedData);
+
+    [LibraryImport("hid.dll", EntryPoint = "HidD_GetAttributes")]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static partial bool HidD_GetAttributes(SafeFileHandle handle, ref HiddAttributes attributes);
+
+    [LibraryImport("hid.dll", EntryPoint = "HidD_GetProductString")]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static unsafe partial bool HidD_GetProductString(SafeFileHandle handle, char* buffer, uint bufferLength);
+
+    [LibraryImport("hid.dll", EntryPoint = "HidP_GetCaps")]
+    internal static partial int HidP_GetCaps(IntPtr preparsedData, out HidpCaps caps);
+
+    [LibraryImport("hid.dll", EntryPoint = "HidP_GetValueCaps")]
+    internal static partial int HidP_GetValueCaps(int reportType, [Out] HidpValueCaps[] valueCaps, ref ushort valueCapsLength, IntPtr preparsedData);
+
+    [LibraryImport("hid.dll", EntryPoint = "HidP_MaxUsageListLength")]
+    internal static partial uint HidP_MaxUsageListLength(int reportType, ushort usagePage, IntPtr preparsedData);
+
+    [LibraryImport("hid.dll", EntryPoint = "HidP_GetUsages")]
+    internal static partial int HidP_GetUsages(int reportType, ushort usagePage, ushort linkCollection, [Out] ushort[] usageList,
+        ref uint usageLength, IntPtr preparsedData, byte[] report, uint reportLength);
+
+    [LibraryImport("hid.dll", EntryPoint = "HidP_GetUsageValue")]
+    internal static partial int HidP_GetUsageValue(int reportType, ushort usagePage, ushort linkCollection, ushort usage,
+        out uint usageValue, IntPtr preparsedData, byte[] report, uint reportLength);
+}

@@ -1,0 +1,11 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.swp
+.vs/
+.idea/
+*.log
+TestResults/
+publish/

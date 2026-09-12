@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Instalador do My Game Console.
+
+  - Instala em "Arquivos de Programas\My Game Console" (per-machine, pede UAC).
+  - Cria atalho no Menu Iniciar e oferece abrir o app ao concluir.
+  - Fecha o app antes de instalar/atualizar/desinstalar (ele roda só na bandeja, sem janela).
+  - Ao desinstalar, remove a entrada em HKCU\...\Run e a tarefa agendada "MyGameConsole" que o
+    próprio app cria em "Iniciar com o Windows". As configurações em %LocalAppData% são mantidas.
+  - "Iniciar com o Windows", papel de parede etc. continuam sendo responsabilidade do app.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="My Game Console"
+           Manufacturer="Leonardo"
+           Version="$(var.Version)"
+           UpgradeCode="7B0D6C2E-4F7A-4B7E-9E1C-5C3A2D1F8E60"
+           Language="1046"
+           Codepage="1252"
+           Scope="perMachine"
+           InstallerVersion="500"
+           Compressed="yes">
+
+    <MajorUpgrade DowngradeErrorMessage="Já existe uma versão mais nova do My Game Console instalada."
+                  Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="AppIcon.ico" SourceFile="..\src\MyGameConsole\Resources\app.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <!-- O app não tem janela principal: o Restart Manager não consegue fechá-lo, então fazemos isso nós. -->
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+
+    <!-- Pastas -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="My Game Console" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppStartMenuFolder" Name="My Game Console" />
+    </StandardDirectory>
+
+    <!-- Arquivos publicados (self-contained) -->
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)\**" />
+    </ComponentGroup>
+
+    <!-- Atalho no Menu Iniciar -->
+    <Component Id="StartMenuShortcut" Directory="AppStartMenuFolder" Guid="3F5E9A7C-2B1D-4C6E-8A9F-0D1E2F3A4B5C">
+      <Shortcut Id="StartMenuAppShortcut"
+                Name="My Game Console"
+                Description="Deixa o Windows com cara de console (Big Picture, Modo Game, controles)."
+                Target="[INSTALLFOLDER]MyGameConsole.exe"
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="AppIcon.ico" />
+      <RemoveFolder Id="RemoveStartMenuFolder" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\MyGameConsole" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Feature Id="Main" Title="My Game Console" Level="1" AllowAbsent="no">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <!-- Interface: Bem-vindo -> pasta de destino -> instalar (sem tela de licença). -->
+    <UI>
+      <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="99" />
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="99" />
+    </UI>
+
+    <!-- "Abrir o My Game Console" ao concluir (roda como usuário comum, não elevado). -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Abrir o My Game Console agora" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <SetProperty Id="WixShellExecTarget" Value="[INSTALLFOLDER]MyGameConsole.exe" After="CostFinalize" Sequence="ui" />
+    <CustomAction Id="LaunchApp" DllEntry="WixShellExec" BinaryRef="Wix4UtilCA_X64" Impersonate="yes" Return="ignore" />
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApp"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+
+    <!-- Fecha o app em execução antes de mexer nos arquivos (pode estar elevado; por isso SYSTEM). -->
+    <SetProperty Id="KillApp" Value="&quot;[System64Folder]taskkill.exe&quot; /IM MyGameConsole.exe /F"
+                 Before="KillApp" Sequence="execute" />
+    <CustomAction Id="KillApp" DllEntry="WixQuietExec" BinaryRef="Wix4UtilCA_X64"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+
+    <!-- Na desinstalação: remove a tarefa agendada elevada criada pelo app. -->
+    <SetProperty Id="DeleteStartupTask" Value="&quot;[System64Folder]schtasks.exe&quot; /delete /tn MyGameConsole /f"
+                 Before="DeleteStartupTask" Sequence="execute" />
+    <CustomAction Id="DeleteStartupTask" DllEntry="WixQuietExec" BinaryRef="Wix4UtilCA_X64"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+
+    <!-- Na desinstalação: remove a entrada de inicialização do usuário (HKCU, por isso impersonado). -->
+    <SetProperty Id="WixQuietExecCmdLine"
+                 Value="&quot;[System64Folder]reg.exe&quot; delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v MyGameConsole /f"
+                 Before="RemoveRunKey" Sequence="execute" />
+    <CustomAction Id="RemoveRunKey" DllEntry="WixQuietExec" BinaryRef="Wix4UtilCA_X64"
+                  Execute="immediate" Impersonate="yes" Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="KillApp" After="InstallInitialize" />
+      <Custom Action="DeleteStartupTask" After="KillApp" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="RemoveRunKey" After="DeleteStartupTask" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+
+  </Package>
+</Wix>

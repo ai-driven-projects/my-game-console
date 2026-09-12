@@ -1,0 +1,27 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+
+  <!--
+    Instalador MSI (per-machine, x64) do My Game Console.
+    Antes de compilar, o app precisa estar publicado (self-contained, win-x64) em "publish\".
+    O script build.ps1 faz a publicação e a compilação do MSI em sequência.
+  -->
+
+  <PropertyGroup>
+    <!-- Versão lida do csproj para o MSI e o app ficarem sempre iguais. -->
+    <AppCsproj>$(MSBuildProjectDirectory)\..\src\MyGameConsole\MyGameConsole.csproj</AppCsproj>
+    <AppVersion Condition="'$(AppVersion)' == ''">$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(AppCsproj)')), '&lt;Version&gt;([^&lt;]+)&lt;/Version&gt;').Groups[1].Value)</AppVersion>
+    <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildProjectDirectory)\publish</PublishDir>
+
+    <OutputName>MyGameConsole-$(AppVersion)-Setup</OutputName>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <Cultures>pt-BR</Cultures>
+    <DefineConstants>Version=$(AppVersion);PublishDir=$(PublishDir)</DefineConstants>
+    <SuppressSpecificWarnings>1076</SuppressSpecificWarnings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
+  </ItemGroup>
+
+</Project>
