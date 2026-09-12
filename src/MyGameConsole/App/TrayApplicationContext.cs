@@ -100,20 +100,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             Safe(ShowConsole);
         }
 
-        _tray.ShowBalloonTip(3000, AppTitle, DescribeLauncherTriggers(), ToolTipIcon.Info);
-    }
-
-    /// <summary>Texto curto com as formas de abrir a tela do console (tecla e/ou gesto do controle).</summary>
-    private string DescribeLauncherTriggers()
-    {
-        var hotkey = _settings.Current.LauncherHotkey;
-        var triggers = new List<string>(2);
-        if (!string.IsNullOrWhiteSpace(hotkey)) triggers.Add($"pressione {hotkey}");
-        if (_settings.Current.OpenLauncherWithControllerCombo) triggers.Add("segure − e + (Back + Start) no controle");
-
-        return triggers.Count == 0
-            ? "Rodando na bandeja do sistema. Clique com o botão direito para ver as opções."
-            : $"Rodando na bandeja. Para abrir a tela do console, {string.Join(" ou ", triggers)}.";
+        // Início silencioso: nenhum balão na bandeja. As formas de abrir a tela do console
+        // (tecla de atalho e gesto do controle) aparecem no menu e na dica do item "Abrir tela do console".
     }
 
     // ------------------------------------------------------------------

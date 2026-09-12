@@ -26,8 +26,8 @@ esconder a área de trabalho, reagir à conexão de controles, atalhos rápidos 
   pasta do Steam pelo registro (ou caminho manual nas configurações).
 - **Controles XInput e HID/DirectInput**: até 4 controles XInput (Xbox e compatíveis, 8BitDo por dongle
   2.4G ou cabo) mais controles HID genéricos (ex.: 8BitDo por Bluetooth, que o Windows expõe só como
-  "Controlador de jogo compatível com HID"). Aviso ao conectar/desconectar e opção de abrir o Big Picture
-  automaticamente quando o primeiro controle conectar. O mapeamento dos botões HID fica em `HidButtons`
+  "Controlador de jogo compatível com HID"). Opção de abrir o Big Picture automaticamente quando o primeiro
+  controle conectar; conectar ou desconectar um controle não mostra aviso. O mapeamento dos botões HID fica em `HidButtons`
   no `settings.json` (padrão no layout D-input do 8BitDo); a tela de configurações mostra os números
   dos botões pressionados para conferir.
 - **Atalhos personalizados**: lista de jogos/launchers/apps no menu (ex.: Playnite, Epic, emuladores).
@@ -45,7 +45,8 @@ esconder a área de trabalho, reagir à conexão de controles, atalhos rápidos 
   Havendo versão nova, baixa o MSI, confere o SHA-256 publicado e executa o instalador, que fecha o app,
   atualiza e o reabre. Nada é baixado nem instalado sem confirmação.
 - **Configurações** persistidas em `%LocalAppData%\MyGameConsole\settings.json`.
-- Instância única (segunda execução apenas avisa que já está rodando).
+- Início silencioso: o app vai direto para a bandeja, sem balão de boas-vindas. Instância única (uma segunda
+  execução encerra em silêncio).
 
 ## Requisitos
 
