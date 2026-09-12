@@ -10,7 +10,9 @@ namespace MyGameConsole.Services;
 /// </summary>
 public sealed class SteamService
 {
-    private const string BigPictureWindowTitle = "Steam Big Picture Mode";
+    /// <summary>Classe da janela da interface do Steam (fica no steamwebhelper.exe, não no steam.exe).</summary>
+    private const string SteamWindowClass = "SDL_app";
+    private static readonly TimeSpan BigPictureFocusTimeout = TimeSpan.FromSeconds(12);
     private readonly SettingsService _settings;
 
     public SteamService(SettingsService settings)
@@ -66,25 +68,100 @@ public sealed class SteamService
 
     public bool IsRunning => Process.GetProcessesByName("steam").Length > 0;
 
-    public bool IsBigPictureActive =>
-        NativeMethods.FindWindow(null, BigPictureWindowTitle) != IntPtr.Zero;
+    public bool IsBigPictureActive => FindBigPictureWindow() != IntPtr.Zero;
 
+    /// <summary>
+    /// Janela do Big Picture, ou zero. O título depende do idioma do Steam ("Steam Big Picture Mode",
+    /// "Steam — Modo Big Picture"...), por isso procura pela classe da janela e por "Big Picture" no título.
+    /// </summary>
+    private static IntPtr FindBigPictureWindow()
+    {
+        foreach (var w in ForegroundWindow.ListVisible())
+        {
+            if (w.ClassName == SteamWindowClass
+                && (w.Title.Contains("Big Picture", StringComparison.OrdinalIgnoreCase)
+                    || w.Title.Contains("Big-Picture", StringComparison.OrdinalIgnoreCase)))
+            {
+                return w.Handle;
+            }
+        }
+
+        return IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// Abre o Big Picture sem esperar: se já estiver aberto, só traz para a frente; senão pede ao Steam
+    /// e tenta dar o foco em segundo plano quando a janela aparecer (melhor esforço). Para a tela do
+    /// console, prefira <see cref="OpenBigPictureAsync"/>, que garante o foco.
+    /// </summary>
     public void OpenBigPicture()
+    {
+        if (!LaunchBigPicture()) return;
+        _ = Task.Run(() => WaitAndFocusBigPictureAsync());
+    }
+
+    /// <summary>
+    /// Abre o Big Picture e espera a janela dele aparecer para trazê-la para a frente. Chamado da interface
+    /// (com a tela do console ainda visível), a continuação roda na thread da interface enquanto este app é
+    /// o processo em primeiro plano, e nesse caso o Windows sempre aceita o pedido de foco. Devolve se a
+    /// janela ficou em primeiro plano dentro do tempo limite.
+    /// </summary>
+    public async Task<bool> OpenBigPictureAsync()
+    {
+        if (!LaunchBigPicture()) return true;
+        return await WaitAndFocusBigPictureAsync();
+    }
+
+    /// <summary>
+    /// Se o Big Picture já estiver aberto, traz para a frente e devolve falso (nada a esperar). Senão, se o
+    /// Steam estiver aberto (mesmo só na bandeja), pede a ele que mude para o Big Picture; se não estiver,
+    /// inicia o Steam já em Big Picture. Devolve verdadeiro quando a janela ainda vai aparecer.
+    /// </summary>
+    private bool LaunchBigPicture()
     {
         var exe = SteamExePath
             ?? throw new InvalidOperationException("Steam não encontrado. Configure o caminho nas opções.");
 
-        if (IsBigPictureActive)
+        var existing = FindBigPictureWindow();
+        if (existing != IntPtr.Zero)
         {
-            var hwnd = NativeMethods.FindWindow(null, BigPictureWindowTitle);
-            NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
-            NativeMethods.SetForegroundWindow(hwnd);
-            return;
+            ForegroundWindow.TryBringToFront(existing);
+            return false;
         }
 
-        // Se o Steam já estiver aberto, o executável repassa os argumentos para a instância em execução.
-        // Sempre sem elevação, mesmo que o app esteja como administrador.
-        ProcessLauncher.Start(exe, "-bigpicture", Path.GetDirectoryName(exe));
+        // Só vale enquanto este app está em primeiro plano: deixa o Steam tomar o foco por conta própria.
+        ForegroundWindow.AllowNextProcessToTakeFocus();
+
+        if (IsRunning)
+        {
+            // "steam.exe -bigpicture" numa instância já aberta só mostra a janela normal do Steam;
+            // a URL é o que de fato muda a interface para o Big Picture.
+            OpenSteamUrl("steam://open/bigpicture");
+        }
+        else
+        {
+            // Sempre sem elevação, mesmo que o app esteja como administrador.
+            ProcessLauncher.Start(exe, "-bigpicture", Path.GetDirectoryName(exe));
+        }
+
+        return true;
+    }
+
+    /// <summary>Espera a janela do Big Picture aparecer (o Steam pode demorar) e a traz para a frente.</summary>
+    private static async Task<bool> WaitAndFocusBigPictureAsync()
+    {
+        var deadline = DateTime.UtcNow + BigPictureFocusTimeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(250);
+            var hwnd = FindBigPictureWindow();
+            if (hwnd == IntPtr.Zero) continue;
+
+            if (ForegroundWindow.TryBringToFront(hwnd)) return true;
+            // Recém-criada, a janela pode ainda não aceitar o foco; tenta de novo no próximo ciclo.
+        }
+
+        return false;
     }
 
     public void CloseBigPicture()

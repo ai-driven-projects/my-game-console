@@ -201,7 +201,7 @@ public sealed partial class ConsoleForm : Form
             Image = SteamIcon(),
             Title = "Steam Big Picture",
             Subtitle = SteamStatusText(),
-            OnSelect = () => { _steam.OpenBigPicture(); Hide(); },
+            OnSelect = () => _ = OpenBigPictureFromConsoleAsync(),
         });
 
         foreach (var sc in _settings.Current.Shortcuts)
@@ -298,14 +298,35 @@ public sealed partial class ConsoleForm : Form
 
     private string SteamStatusText() =>
         !_steam.IsInstalled ? "Steam não encontrado"
-        : _steam.IsBigPictureActive ? "Big Picture já está aberto"
-        : _steam.IsRunning ? "Steam em execução"
+        : _steam.IsBigPictureActive ? "Big Picture aberto: traz para a frente"
+        : _steam.IsRunning ? "Steam aberto: muda para o Big Picture"
         : "Abre o Steam em modo Big Picture";
 
     private static string SafeFileName(string path)
     {
         try { return Path.GetFileName(path); }
         catch { return path; }
+    }
+
+    /// <summary>
+    /// Abre o Big Picture mantendo esta tela visível até a janela dele estar em primeiro plano; só então
+    /// esconde. Enquanto esta tela está na frente, o app é o processo em primeiro plano e o Windows aceita
+    /// dar o foco ao Steam; se escondêssemos antes, o pedido de foco seria ignorado (só piscaria na barra).
+    /// </summary>
+    private async Task OpenBigPictureFromConsoleAsync()
+    {
+        try
+        {
+            if (!_steam.IsBigPictureActive) ShowNotice("Abrindo o Steam Big Picture...");
+            var focused = await _steam.OpenBigPictureAsync();
+            if (!Visible) return; // o usuário fechou esta tela enquanto esperava
+            Hide();
+            if (!focused) ShowNotice("O Big Picture não apareceu a tempo. Confira a janela do Steam.", isError: true);
+        }
+        catch (Exception ex)
+        {
+            ShowNotice(ex.Message, isError: true);
+        }
     }
 
     private void ToggleGameMode()

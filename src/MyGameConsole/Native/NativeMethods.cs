@@ -24,6 +24,46 @@ internal static partial class NativeMethods
     [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]
     internal static partial IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
+    // Localizar janelas de outros processos e trazê-las para a frente (ver App/ForegroundWindow.cs).
+
+    [LibraryImport("user32.dll", EntryPoint = "EnumWindows")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static unsafe partial bool EnumWindows(delegate* unmanaged<IntPtr, IntPtr, int> lpEnumFunc, IntPtr lParam);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetWindowTextW")]
+    internal static unsafe partial int GetWindowText(IntPtr hWnd, char* lpString, int nMaxCount);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetClassNameW")]
+    internal static unsafe partial int GetClassName(IntPtr hWnd, char* lpClassName, int nMaxCount);
+
+    [LibraryImport("user32.dll", EntryPoint = "IsWindowVisible")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool IsWindowVisible(IntPtr hWnd);
+
+    [LibraryImport("user32.dll", EntryPoint = "IsIconic")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool IsIconic(IntPtr hWnd);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetForegroundWindow")]
+    internal static partial IntPtr GetForegroundWindow();
+
+    [LibraryImport("user32.dll", EntryPoint = "BringWindowToTop")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool BringWindowToTop(IntPtr hWnd);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetWindowThreadProcessId")]
+    internal static partial uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [LibraryImport("user32.dll", EntryPoint = "AttachThreadInput")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool AttachThreadInput(uint idAttach, uint idAttachTo, [MarshalAs(UnmanagedType.Bool)] bool fAttach);
+
+    [LibraryImport("user32.dll", EntryPoint = "AllowSetForegroundWindow")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool AllowSetForegroundWindow(uint dwProcessId);
+
+    internal const uint ASFW_ANY = 0xFFFFFFFF;
+
     [LibraryImport("user32.dll", EntryPoint = "RegisterHotKey")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
