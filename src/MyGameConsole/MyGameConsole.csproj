@@ -13,7 +13,7 @@
     <Product>My Game Console</Product>
     <Company>Leonardo</Company>
     <!-- Versão do app (Major.Minor.Patch). É a fonte da versão do MSI, da tag da release (v1.0.0) e da checagem de atualização. -->
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <!-- Sem o sufixo "+hash" na versão informativa: a versão exibida e comparada com as releases é só Major.Minor.Patch. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <!-- Necessário para o gerador de código do LibraryImport (P/Invoke moderno). -->
