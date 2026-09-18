@@ -56,6 +56,32 @@ public sealed class AppSettings
     public HidButtonMap HidButtons { get; set; } = new();
 
     // ------------------------------------------------------------------
+    // Controle: mouse pelo analógico, teclado virtual e atalhos
+    // ------------------------------------------------------------------
+
+    /// <summary>Mover o cursor do mouse com o analógico do controle, em qualquer janela do Windows.</summary>
+    public bool ControllerMouseEnabled { get; set; }
+
+    /// <summary>
+    /// Qual analógico move o cursor. O direito é o padrão: o esquerdo é o que navega menus e jogos,
+    /// e usá-lo para o mouse faria o cursor andar toda vez que se navega em outro app. Controles HID que
+    /// não publicam o analógico direito (o app mostra isso em "Controles conectados") precisam do esquerdo.
+    /// </summary>
+    public bool ControllerMouseUseRightStick { get; set; } = true;
+
+    /// <summary>Velocidade do cursor movido pelo analógico, de 1 (lento) a 5 (rápido).</summary>
+    public int ControllerMouseSpeed { get; set; } = 3;
+
+    /// <summary>Teclado virtual: falso usa o teclado de toque do Windows (TabTip); verdadeiro, o clássico (osk.exe).</summary>
+    public bool VirtualKeyboardClassic { get; set; }
+
+    /// <summary>Ligar e desligar o mouse pelo analógico segurando X + A no controle.</summary>
+    public bool ToggleMouseWithControllerCombo { get; set; } = true;
+
+    /// <summary>Mostrar e esconder o teclado virtual segurando Y + B no controle.</summary>
+    public bool ToggleKeyboardWithControllerCombo { get; set; } = true;
+
+    // ------------------------------------------------------------------
     // Modo Game (persistente entre reinicializações)
     // ------------------------------------------------------------------
 

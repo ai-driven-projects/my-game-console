@@ -29,6 +29,8 @@ public sealed partial class ConsoleForm
         public Func<string>? Extra { get; init; }
         /// <summary>Selo de estado (ex.: APLICADO, PENDENTE) desenhado no lugar do LIGADO/DESLIGADO. Tem prioridade sobre IsOn e Value.</summary>
         public Func<(string Text, Color Color)>? Status { get; init; }
+        /// <summary>Partes do controle que este item acende no desenho da página "Controle".</summary>
+        public Func<PadPart>? Highlight { get; init; }
         public RectangleF Bounds { get; set; }
     }
 
@@ -42,6 +44,8 @@ public sealed partial class ConsoleForm
     // A mesma página (lista + painel) serve para Configurações e para o checklist do Modo Game.
     private string _pageTitle = "CONFIGURAÇÕES";
     private Action _pageBuilder = () => { };
+    /// <summary>Arte no topo do painel de detalhes (o desenho do controle na página "Controle").</summary>
+    private Action<Graphics, RectangleF>? _pageArt;
 
     private CaptureKind _capture;
     private string _captureTitle = string.Empty;
@@ -59,10 +63,11 @@ public sealed partial class ConsoleForm
 
     private void OpenSettingsPage() => OpenPage("CONFIGURAÇÕES", BuildSettingsItems);
 
-    private void OpenPage(string title, Action builder)
+    private void OpenPage(string title, Action builder, Action<Graphics, RectangleF>? art = null)
     {
         _pageTitle = title;
         _pageBuilder = builder;
+        _pageArt = art;
         _itemIndex = 0;
         _itemScroll = 0;
         builder();
@@ -178,6 +183,14 @@ public sealed partial class ConsoleForm
         });
 
         Header("Controle");
+        _items.Add(new SettingItem
+        {
+            Title = "Atalhos, mouse pelo analógico e teclado virtual",
+            Description = "Abre a página \"Controle\": o mapa dos atalhos com o controle desenhado, o mouse pelo analógico " +
+                          "e o teclado virtual. B volta para os tiles.",
+            Value = () => "A  Abrir",
+            OnSelect = OpenControllerPage,
+        });
         _items.Add(new SettingItem
         {
             Title = "Controles conectados",
@@ -345,12 +358,13 @@ public sealed partial class ConsoleForm
         _exitApp();
     }
 
-    private void Toggle(string title, string description, Func<bool> get, Action<bool> set)
+    private void Toggle(string title, string description, Func<bool> get, Action<bool> set, PadPart highlight = PadPart.None)
     {
         _items.Add(new SettingItem
         {
             Title = title,
             Description = description,
+            Highlight = highlight == PadPart.None ? null : () => highlight,
             IsOn = get,
             OnSelect = () => set(!get()),
             OnAdjust = dx => { bool v = dx > 0; if (get() != v) set(v); },
@@ -707,6 +721,14 @@ public sealed partial class ConsoleForm
             float pad = u * 2.6f;
             float innerW = panel.Width - 2 * pad;
             float yy = panel.Y + pad;
+
+            // Páginas com arte (o desenho do controle) reservam a parte de cima do painel para ela.
+            if (_pageArt is { } art)
+            {
+                var artRect = new RectangleF(panel.X + pad, yy, innerW, panel.Height * 0.40f);
+                art(g, artRect);
+                yy = artRect.Bottom + u * 1.5f;
+            }
 
             g.DrawString(cur.Title, panelTitleFont, textBrush, new RectangleF(panel.X + pad, yy, innerW, u * 9f));
             yy += g.MeasureString(cur.Title, panelTitleFont, (int)innerW).Height + u * 1.5f;

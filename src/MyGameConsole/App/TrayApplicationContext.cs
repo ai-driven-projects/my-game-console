@@ -27,6 +27,8 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly GameModeService _gameMode;
     private readonly HotkeyService _hotkey = new();
     private readonly ControllerComboService _controllerCombo;
+    private readonly ControllerMouseService _mouse;
+    private readonly VirtualKeyboardService _keyboard;
     private readonly UpdateService _updates = new();
 
     private readonly NotifyIcon _tray;
@@ -47,6 +49,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         _consoleMode = new ConsoleModeService(_settings, _shell, _steam);
         _gameMode = new GameModeService(_settings, _tweaks, _power);
         _controllerCombo = new ControllerComboService(_controllers);
+        _mouse = new ControllerMouseService(_settings, _controllers);
+        _keyboard = new VirtualKeyboardService(_settings);
 
         _tray = new NotifyIcon
         {
@@ -65,7 +69,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         _controllers.CountChanged += OnControllerCountChanged;
         _settings.Changed += (_, _) => OnSettingsChanged();
         _hotkey.Pressed += (_, _) => Safe(ShowConsole);
-        _controllerCombo.Triggered += (_, _) => OnControllerComboTriggered();
+        _controllerCombo.Triggered += (_, combo) => OnControllerComboTriggered(combo);
+        _mouse.StateChanged += (_, _) => OnMouseStateChanged();
 
         _pollTimer = new System.Windows.Forms.Timer { Interval = 2000 };
         _pollTimer.Tick += (_, _) => Poll();
@@ -84,7 +89,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         SyncStartupRegistration();
         RegisterHotkey();
-        SyncControllerCombo();
+        SyncControllerFeatures();
         Poll();
 
         // Modo Game é persistente: reaplica os ajustes a cada início (inclusive após reiniciar o PC),
@@ -163,6 +168,23 @@ public sealed class TrayApplicationContext : ApplicationContext
         };
         consoleItem.Click += (_, _) => Safe(_consoleMode.Toggle);
         _menu.Items.Add(consoleItem);
+
+        // Mouse pelo analógico e teclado virtual (os mesmos da tela "Controle" e dos atalhos X + A e Y + B)
+        var mouseItem = new ToolStripMenuItem("Mouse pelo analógico")
+        {
+            Checked = _mouse.IsEnabled,
+            ToolTipText = "O analógico direito move o cursor; A clica, X abre o menu de contexto. No controle: segure X + A.",
+        };
+        mouseItem.Click += (_, _) => Safe(_mouse.Toggle);
+        _menu.Items.Add(mouseItem);
+
+        var keyboardItem = new ToolStripMenuItem("Teclado virtual")
+        {
+            Checked = _keyboard.IsVisible,
+            ToolTipText = "Mostra o teclado na tela para digitar com o controle. No controle: segure Y + B.",
+        };
+        keyboardItem.Click += (_, _) => Safe(_keyboard.Toggle);
+        _menu.Items.Add(keyboardItem);
 
         _menu.Items.Add(new ToolStripSeparator());
 
@@ -290,7 +312,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         SyncStartupRegistration();
         RegisterHotkey();
-        SyncControllerCombo();
+        SyncControllerFeatures();
         // Se as opções do Modo Game mudaram enquanto ele está ativo, aplica na hora (o usuário está na tela: pode pedir UAC).
         Safe(() => _gameMode.ReapplyIfEnabled(interactive: true));
         UpdateTrayText();
@@ -305,11 +327,14 @@ public sealed class TrayApplicationContext : ApplicationContext
         if (_console is null || _console.IsDisposed)
         {
             _console = new ConsoleForm(
-                _settings, _steam, _gameMode, _power, _display, _backlight, _controllers, _updates,
+                _settings, _steam, _gameMode, _power, _display, _backlight, _controllers, _mouse, _keyboard, _updates,
                 openSettings: ShowSettings,
                 launchShortcut: LaunchShortcut,
                 exitApp: ExitApplication,
                 restartElevated: RestartElevated);
+
+            // Na tela do console o controle navega a própria tela: o mouse pelo analógico fica em pausa.
+            _console.VisibleChanged += (_, _) => _mouse.Suspended = _console is { IsDisposed: false, Visible: true };
         }
 
         _console.ShowLauncher();
@@ -446,16 +471,50 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
-    private void SyncControllerCombo()
+    /// <summary>Atalhos do controle ligados e leitura do analógico para o mouse, conforme as configurações.</summary>
+    private void SyncControllerFeatures()
     {
-        _controllerCombo.Enabled = _settings.Current.OpenLauncherWithControllerCombo;
+        _controllerCombo.SetActive(ControllerCombo.EnabledIn(_settings.Current));
+        _mouse.Sync();
     }
 
-    private void OnControllerComboTriggered()
+    /// <summary>
+    /// Aviso na tela ao ligar ou desligar o mouse pelo analógico, venha a mudança do gesto X + A, do menu da
+    /// bandeja ou da tela do console: sem ele não dá para saber em que estado o controle está. O teclado virtual
+    /// não precisa de aviso — ele próprio aparece e some na tela.
+    /// </summary>
+    private void OnMouseStateChanged()
     {
-        // Com a tela já aberta, ela mesma trata o controle; o gesto só serve para abrir.
+        // Com a tela do console aberta, o aviso sai nela mesma (rodapé), no lugar do flutuante.
         if (_console is { IsDisposed: false, Visible: true }) return;
-        Safe(ShowConsole);
+
+        bool on = _mouse.IsEnabled;
+        ToastForm.Show(
+            on ? "Mouse pelo analógico ligado" : "Mouse pelo analógico desligado",
+            Theme.GlyphMouse,
+            on ? Theme.Success : Theme.Danger,
+            crossed: !on);
+    }
+
+    private void OnControllerComboTriggered(ControllerCombo combo)
+    {
+        // Com a tela do console aberta, ela mesma trata o controle; os atalhos valem no Windows.
+        if (_console is { IsDisposed: false, Visible: true }) return;
+
+        switch (combo.Id)
+        {
+            case ControllerCombo.OpenConsole:
+                Safe(ShowConsole);
+                break;
+
+            case ControllerCombo.ToggleMouse:
+                Safe(_mouse.Toggle); // o aviso na tela sai em OnMouseStateChanged, venha de onde vier a mudança
+                break;
+
+            case ControllerCombo.ToggleKeyboard:
+                Safe(_keyboard.Toggle);
+                break;
+        }
     }
 
     private void RegisterHotkey()
@@ -508,7 +567,9 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         _pollTimer.Stop();
         _updateCheckTimer.Stop();
-        _controllerCombo.Enabled = false;
+        _controllerCombo.SetActive([]);
+        _mouse.Suspended = true; // solta qualquer botão do mouse que esteja pressionado
+        ToastForm.CloseCurrent();
         _hotkey.Dispose();
         _consoleMode.EnsureShellRestored();
         _tray.Visible = false;
@@ -547,6 +608,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             _updateCheckTimer.Dispose();
             _updateForm?.Dispose();
             _controllerCombo.Dispose();
+            _mouse.Dispose();
             _controllers.Dispose();
             _hotkey.Dispose();
             _menu.Dispose();

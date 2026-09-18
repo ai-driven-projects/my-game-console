@@ -44,6 +44,8 @@ public sealed partial class ConsoleForm : Form
     private readonly DisplayService _display;
     private readonly KeyboardBacklightService _backlight;
     private readonly ControllerService _controllers;
+    private readonly ControllerMouseService _mouse;
+    private readonly VirtualKeyboardService _keyboard;
     private readonly UpdateService _updates;
     private readonly Action _openSettings;
     private readonly Action<AppShortcut> _launchShortcut;
@@ -84,6 +86,8 @@ public sealed partial class ConsoleForm : Form
         DisplayService display,
         KeyboardBacklightService backlight,
         ControllerService controllers,
+        ControllerMouseService mouse,
+        VirtualKeyboardService keyboard,
         UpdateService updates,
         Action openSettings,
         Action<AppShortcut> launchShortcut,
@@ -97,6 +101,8 @@ public sealed partial class ConsoleForm : Form
         _display = display;
         _backlight = backlight;
         _controllers = controllers;
+        _mouse = mouse;
+        _keyboard = keyboard;
         _updates = updates;
         _openSettings = openSettings;
         _launchShortcut = launchShortcut;
@@ -224,6 +230,14 @@ public sealed partial class ConsoleForm : Form
             Subtitle = "Checklist do que o app aplica (barra, ícones, papel de parede, senha ao acordar) e do que falta fazer à mão.",
             IsOn = () => _gameMode.IsEnabled,
             OnSelect = OpenGameModePage,
+        });
+        system.Tiles.Add(new Tile
+        {
+            Glyph = Theme.GlyphController,
+            Title = "Controle",
+            Subtitle = "Mapa dos atalhos do controle, mouse pelo analógico e teclado virtual, com o desenho do controle.",
+            IsOn = () => _mouse.IsEnabled,
+            OnSelect = OpenControllerPage,
         });
         system.Tiles.Add(new Tile
         {
@@ -1030,15 +1044,5 @@ public sealed partial class ConsoleForm : Form
         g.DrawString(_notice, font, textBrush, rect, center);
     }
 
-    private static GraphicsPath RoundedRect(RectangleF r, float radius)
-    {
-        var path = new GraphicsPath();
-        float d = radius * 2f;
-        path.AddArc(r.X, r.Y, d, d, 180, 90);
-        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-        path.CloseFigure();
-        return path;
-    }
+    private static GraphicsPath RoundedRect(RectangleF r, float radius) => Shapes.RoundedRect(r, radius);
 }

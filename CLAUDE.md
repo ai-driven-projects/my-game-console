@@ -31,6 +31,18 @@ Se `dotnet` não estiver no PATH da sessão, use `C:\Program Files\dotnet\dotnet
   no checklist, com o estado lido do Windows e a tela certa aberta com A.
 - A tela do console (`Forms/ConsoleForm.cs`) é 100% desenhada em `OnPaint` e precisa continuar navegável
   só com controle: qualquer confirmação deve usar o overlay Sim/Não da própria tela, nunca `MessageBox`.
+- Atalhos do controle: o catálogo é único, em `Models/ControllerCombo.cs` (botões, texto e título). Um atalho
+  novo entra lá, ganha o seu campo em `AppSettings` (via `IsEnabledIn`/`SetEnabledIn`) e um caso em
+  `TrayApplicationContext.OnControllerComboTriggered`; a página "Controle" o lista sozinha.
+- "Mouse pelo analógico" (`ControllerMouseService`) e teclado virtual (`VirtualKeyboardService`) guardam o
+  estado no `AppSettings`; o `TrayApplicationContext` sincroniza em `SyncControllerFeatures` e pausa o mouse
+  (`Suspended`) enquanto a tela do console está visível, onde o controle navega a própria tela.
+- O cursor é movido pelo **analógico direito** de propósito: o esquerdo é o que navega o app em primeiro plano
+  (Big Picture, jogos) e usá-lo criaria conflito. Por isso a rolagem ficou no direcional ▲▼. Controles HID
+  publicam o analógico direito como Z/Rz ou Rx/Ry — ver `HidGamepadDevice.ReadAxes`; os que não publicam
+  nenhum dos pares precisam da opção "Analógico que move o cursor" em Esquerdo.
+- O desenho do controle fica em `App/GamepadArt.cs`, sem depender do formulário: dá para renderizá-lo em um
+  PNG por um projeto de teste separado para conferir a arte sem abrir o app.
 
 ## Versões e releases
 

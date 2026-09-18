@@ -35,6 +35,21 @@ esconder a área de trabalho, reagir à conexão de controles, atalhos rápidos 
   controle conectar; conectar ou desconectar um controle não mostra aviso. O mapeamento dos botões HID fica em `HidButtons`
   no `settings.json` (padrão no layout D-input do 8BitDo); a tela de configurações mostra os números
   dos botões pressionados para conferir.
+- **Tela "Controle"** (tile na fileira "Sistema"): o mapa dos atalhos do controle com um controle desenhado ao
+  lado; o item selecionado acende no desenho os botões que ele usa, para decorar rápido. De lá saem também os dois
+  recursos abaixo, que também estão no menu da bandeja.
+- **Mouse pelo analógico**: o **analógico direito** move o cursor em qualquer janela do Windows (A é o clique
+  esquerdo, X o direito, Y o do meio; o direcional ▲▼ rola a página). O analógico esquerdo fica livre de
+  propósito: é o que navega menus, o Big Picture e os jogos. A velocidade vai de 1 a 5 e o estado é
+  persistente. Fica em pausa enquanto a tela do console está aberta, onde o controle navega a própria tela.
+  O clique só sai com um botão de face por vez, para os atalhos de dois botões não clicarem sem querer.
+  Controles HID que não publicam o analógico direito (o app mostra a posição dos dois em "Controles
+  conectados") podem voltar para o esquerdo na tela "Controle".
+- **Teclado virtual**: mostra e esconde o teclado de toque do Windows (TabTip) ou o clássico (`osk.exe`),
+  para digitar com o cursor movido pelo analógico.
+- **Atalhos no controle** (valem em qualquer janela, inclusive com um jogo na frente): segure por meio segundo
+  **− e +** (Back + Start) para abrir a tela do console, **X + A** para ligar/desligar o mouse pelo analógico e
+  **Y + B** para mostrar/esconder o teclado virtual. Cada um pode ser desligado na tela "Controle".
 - **Atalhos personalizados**: lista de jogos/launchers/apps no menu (ex.: Playnite, Epic, emuladores).
 - **Energia**: suspender, hibernar, reiniciar e desligar (com confirmação). Na tela do console, "Suspender"
   oferece duas opções: suspender o PC (padrão) ou o **repouso de console**: apaga só a tela e, em notebooks
@@ -143,14 +158,18 @@ src/MyGameConsole/
 ├── Program.cs                    # ponto de entrada, instância única
 ├── App/TrayApplicationContext.cs # ícone da bandeja, menu, timer de monitoramento
 ├── App/Theme.cs                  # cores, glifos e fonte de ícones
+├── App/GamepadArt.cs             # desenho do controle (botões acesos) usado na página "Controle"
+├── App/Shapes.cs                 # formas compartilhadas (retângulo arredondado)
 ├── Forms/ConsoleForm.cs          # tela do console (launcher em tela cheia, controle/teclado/mouse)
 ├── Forms/ConsoleForm.Settings.cs # página de configurações dentro da tela do console
 ├── Forms/ConsoleForm.GameMode.cs # página "Modo Game": checklist do que o app aplica e do que fazer à mão
+├── Forms/ConsoleForm.Controller.cs # página "Controle": mapa dos atalhos, mouse pelo analógico, teclado virtual
 ├── Forms/SettingsForm.cs         # janela de configurações clássica (teclado/mouse)
 ├── Forms/ShortcutEditorForm.cs   # diálogo de atalho
 ├── Forms/UpdateForm.cs           # janela de atualização (notas da release, download, instalar)
 ├── Models/AppSettings.cs         # modelo das configurações (JSON)
 ├── Models/GamepadState.cs        # estado normalizado de controle (botões/analógicos)
+├── Models/ControllerCombo.cs     # catálogo dos atalhos do controle (− e +, X + A, Y + B)
 ├── Native/NativeMethods.cs       # P/Invoke (user32, powrprof, XInput, hid, cfgmgr32)
 ├── Services/
 │   ├── SettingsService.cs        # carregar/salvar settings.json
@@ -158,7 +177,9 @@ src/MyGameConsole/
 │   ├── ControllerService.cs      # controles: XInput + HID, estado unificado
 │   ├── HidGamepadService.cs      # enumeração de controles HID (DirectInput)
 │   ├── HidGamepadDevice.cs       # leitura/parsing de um controle HID
-│   ├── ControllerComboService.cs # gesto Back + Start (− e +) que abre a tela do console
+│   ├── ControllerComboService.cs # atalhos globais do controle (combinações seguradas)
+│   ├── ControllerMouseService.cs # mouse pelo analógico (SendInput: mover, clicar, rolar)
+│   ├── VirtualKeyboardService.cs # teclado virtual do Windows (TabTip ou osk.exe)
 │   ├── ShellService.cs           # parar/iniciar explorer.exe
 │   ├── ConsoleModeService.cs     # orquestra o Modo Console
 │   ├── DesktopTweaksService.cs   # barra auto-ocultar, ícones, papel de parede
@@ -176,6 +197,7 @@ scripts/release.ps1               # publica uma nova versão como release no Git
 ## Ideias para próximos passos
 
 - Botão Guide/Home do controle abrindo a tela do console (exige XInputGetStateEx; hoje o gesto é − e +).
+- Teclado virtual aparecendo sozinho ao focar um campo de texto (hoje é manual, pelo atalho Y + B).
 - Splash em tela cheia no boot até o Big Picture aparecer.
 - Trocar resolução/taxa de atualização ao entrar no Modo Console.
 - Integração com outros launchers (Playnite, Epic, GOG) e emuladores.

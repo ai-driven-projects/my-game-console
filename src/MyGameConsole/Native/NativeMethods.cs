@@ -47,6 +47,9 @@ internal static partial class NativeMethods
     [LibraryImport("user32.dll", EntryPoint = "GetForegroundWindow")]
     internal static partial IntPtr GetForegroundWindow();
 
+    [LibraryImport("user32.dll", EntryPoint = "GetDesktopWindow")]
+    internal static partial IntPtr GetDesktopWindow();
+
     [LibraryImport("user32.dll", EntryPoint = "BringWindowToTop")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool BringWindowToTop(IntPtr hWnd);
@@ -76,6 +79,12 @@ internal static partial class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool SystemParametersInfo(uint uiAction, uint uiParam, string pvParam, uint fWinIni);
 
+    // Estilos estendidos de janela usados pelo aviso flutuante (Forms/ToastForm.cs): ele aparece sobre tudo,
+    // nunca rouba o foco (WS_EX_NOACTIVATE), deixa o clique passar (WS_EX_TRANSPARENT) e não entra no Alt+Tab.
+    internal const int WS_EX_TRANSPARENT = 0x00000020;
+    internal const int WS_EX_TOOLWINDOW = 0x00000080;
+    internal const int WS_EX_NOACTIVATE = 0x08000000;
+
     internal const int SW_HIDE = 0;
     internal const int SW_SHOW = 5;
     internal const int SW_RESTORE = 9;
@@ -95,6 +104,14 @@ internal static partial class NativeMethods
     internal const uint SPI_SETDESKWALLPAPER = 0x0014;
     internal const uint SPIF_UPDATEINIFILE = 0x0001;
     internal const uint SPIF_SENDCHANGE = 0x0002;
+
+    // ---------- dwm (janelas "cloaked": existem mas não aparecem, como o teclado de toque) ----------
+
+    /// <summary>DWMWA_CLOAKED: diferente de zero quando a janela está escondida pelo compositor.</summary>
+    internal const uint DWMWA_CLOAKED = 14;
+
+    [LibraryImport("dwmapi.dll", EntryPoint = "DwmGetWindowAttribute")]
+    internal static partial int DwmGetWindowAttribute(IntPtr hWnd, uint attribute, out int value, int size);
 
     // ---------- shell32 (barra de tarefas) ----------
 
@@ -225,6 +242,17 @@ internal static partial class NativeMethods
 
     internal const uint INPUT_MOUSE = 0;
     internal const uint MOUSEEVENTF_MOVE = 0x0001;
+    internal const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    internal const uint MOUSEEVENTF_LEFTUP = 0x0004;
+    internal const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
+    internal const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+    internal const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
+    internal const uint MOUSEEVENTF_MIDDLEUP = 0x0040;
+    internal const uint MOUSEEVENTF_WHEEL = 0x0800;
+    internal const uint MOUSEEVENTF_HWHEEL = 0x1000;
+
+    /// <summary>Uma "casa" da roda do mouse (o mesmo WHEEL_DELTA do Windows).</summary>
+    internal const int WHEEL_DELTA = 120;
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct MouseInput

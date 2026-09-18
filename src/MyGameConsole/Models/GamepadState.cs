@@ -21,5 +21,11 @@ public enum GamepadButtons : ushort
 /// <summary>
 /// Estado normalizado de um controle, independente da origem (XInput ou HID/DirectInput).
 /// Analógicos no intervalo -32768..32767; eixo Y positivo para cima, como no XInput.
+/// O analógico direito só chega pelo XInput: em controles HID ele fica em zero.
 /// </summary>
-public readonly record struct GamepadState(GamepadButtons Buttons, short ThumbLX, short ThumbLY);
+public readonly record struct GamepadState(
+    GamepadButtons Buttons,
+    short ThumbLX,
+    short ThumbLY,
+    short ThumbRX = 0,
+    short ThumbRY = 0);

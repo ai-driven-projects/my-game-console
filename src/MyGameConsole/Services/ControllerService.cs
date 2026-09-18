@@ -88,7 +88,7 @@ public sealed class ControllerService : IDisposable
                 if (NativeMethods.XInputGetState(i, out var state) != NativeMethods.ERROR_SUCCESS) continue;
 
                 var pad = state.Gamepad;
-                yield return new GamepadState((GamepadButtons)pad.Buttons & KnownXInputButtons, pad.ThumbLX, pad.ThumbLY);
+                yield return new GamepadState((GamepadButtons)pad.Buttons & KnownXInputButtons, pad.ThumbLX, pad.ThumbLY, pad.ThumbRX, pad.ThumbRY);
             }
         }
 
@@ -138,9 +138,19 @@ public sealed class ControllerService : IDisposable
             var dpad = string.Concat(raw.Up ? "↑" : "", raw.Down ? "↓" : "", raw.Left ? "←" : "", raw.Right ? "→" : "");
             yield return $"HID (DirectInput) {device.Name} [{device.VendorId:X4}:{device.ProductId:X4}] — " +
                          $"botões: {(pressed.Count == 0 ? "nenhum" : string.Join(", ", pressed))}" +
-                         (dpad.Length > 0 ? $" — direcional {dpad}" : string.Empty);
+                         (dpad.Length > 0 ? $" — direcional {dpad}" : string.Empty) +
+                         Sticks(raw);
         }
     }
+
+    /// <summary>
+    /// Posição dos dois analógicos, em porcentagem do curso. O mouse pelo controle é movido pelo analógico
+    /// direito, que nem todo controle HID publica: aqui dá para ver se ele chega.
+    /// </summary>
+    private static string Sticks(HidRawState raw) =>
+        $" — analógicos: esquerdo ({Percent(raw.X)}, {Percent(raw.Y)}), direito ({Percent(raw.RX)}, {Percent(raw.RY)})";
+
+    private static string Percent(short axis) => $"{axis * 100 / short.MaxValue}%";
 
     private static GamepadState Convert(HidRawState raw, HidButtonMap map)
     {
@@ -156,7 +166,7 @@ public sealed class ControllerService : IDisposable
         if (IsPressed(raw.ButtonMask, map.Back)) buttons |= GamepadButtons.Back;
         if (IsPressed(raw.ButtonMask, map.Start)) buttons |= GamepadButtons.Start;
 
-        return new GamepadState(buttons, raw.X, raw.Y);
+        return new GamepadState(buttons, raw.X, raw.Y, raw.RX, raw.RY);
     }
 
     private static bool IsPressed(uint mask, int button) =>

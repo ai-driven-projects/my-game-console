@@ -23,6 +23,10 @@ public static class Theme
     public const string GlyphGame = "";
     public const string GlyphPlay = "";
     public const string GlyphApps = "";
+    /// <summary>Teclado e mouse: a página "Controle" (atalhos do controle, mouse pelo analógico, teclado virtual).</summary>
+    public const string GlyphController = "";
+    /// <summary>Mouse: aviso de mouse ligado ou desligado no controle.</summary>
+    public const string GlyphMouse = "";
     public const string GlyphSettings = "";
     public const string GlyphHome = "";
     public const string GlyphMoon = "";

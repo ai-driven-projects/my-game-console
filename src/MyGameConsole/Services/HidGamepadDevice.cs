@@ -6,9 +6,11 @@ namespace MyGameConsole.Services;
 
 /// <summary>
 /// Estado bruto lido de um controle HID: bit (n-1) ligado = botão HID n pressionado,
-/// direcional (hat switch) já convertido em direções e eixos X/Y normalizados.
+/// direcional (hat switch) já convertido em direções e eixos normalizados do analógico esquerdo
+/// (X, Y) e do direito (RX, RY; zero quando o controle não publica esses eixos).
 /// </summary>
-internal readonly record struct HidRawState(uint ButtonMask, bool Up, bool Down, bool Left, bool Right, short X, short Y);
+internal readonly record struct HidRawState(
+    uint ButtonMask, bool Up, bool Down, bool Left, bool Right, short X, short Y, short RX = 0, short RY = 0);
 
 /// <summary>
 /// Um controle HID genérico (o que o Windows chama de "Controlador de jogo compatível com HID",
@@ -24,16 +26,23 @@ internal sealed class HidGamepadDevice : IDisposable
     private const ushort UsageMultiAxis = 0x08;
     private const ushort UsageX = 0x30;
     private const ushort UsageY = 0x31;
+    private const ushort UsageZ = 0x32;
+    private const ushort UsageRx = 0x33;
+    private const ushort UsageRy = 0x34;
+    private const ushort UsageRz = 0x35;
     private const ushort UsageHat = 0x39;
 
-    private readonly record struct ValueRange(int Min, int Max, ushort BitSize);
+    /// <summary>Um eixo publicado pelo controle: o usage HID e o intervalo lógico dos valores.</summary>
+    private readonly record struct Axis(ushort Usage, int Min, int Max, ushort BitSize);
 
     private readonly SafeFileHandle _handle;
     private readonly IntPtr _preparsed;
     private readonly ushort _reportLength;
-    private readonly ValueRange? _x;
-    private readonly ValueRange? _y;
-    private readonly ValueRange? _hat;
+    private readonly Axis? _x;
+    private readonly Axis? _y;
+    private readonly Axis? _rx;
+    private readonly Axis? _ry;
+    private readonly Axis? _hat;
     private readonly uint _maxButtonUsages;
 
     private readonly object _lock = new();
@@ -51,7 +60,7 @@ internal sealed class HidGamepadDevice : IDisposable
     public bool IsAlive => !_dead;
 
     private HidGamepadDevice(string path, SafeFileHandle handle, IntPtr preparsed, ushort reportLength,
-        ValueRange? x, ValueRange? y, ValueRange? hat, ushort vid, ushort pid, string name)
+        Axis? x, Axis? y, Axis? rx, Axis? ry, Axis? hat, ushort vid, ushort pid, string name)
     {
         Path = path;
         _handle = handle;
@@ -59,6 +68,8 @@ internal sealed class HidGamepadDevice : IDisposable
         _reportLength = reportLength;
         _x = x;
         _y = y;
+        _rx = rx;
+        _ry = ry;
         _hat = hat;
         VendorId = vid;
         ProductId = pid;
@@ -98,7 +109,7 @@ internal sealed class HidGamepadDevice : IDisposable
                 throw new InvalidOperationException("Dispositivo HID sem relatório de entrada.");
             }
 
-            ReadValueRanges(preparsed, caps.NumberInputValueCaps, out var x, out var y, out var hat);
+            ReadAxes(preparsed, caps.NumberInputValueCaps, out var x, out var y, out var rx, out var ry, out var hat);
 
             var attrs = new NativeMethods.HiddAttributes { Size = (uint)Marshal.SizeOf<NativeMethods.HiddAttributes>() };
             NativeMethods.HidD_GetAttributes(handle, ref attrs);
@@ -106,7 +117,7 @@ internal sealed class HidGamepadDevice : IDisposable
             // Por Bluetooth LE o Windows costuma não devolver a string do produto; usa o fabricante quando conhecido.
             var name = ReadProductName(handle)
                 ?? (attrs.VendorId == 0x2DC8 ? "8BitDo (Bluetooth)" : $"Controle HID {attrs.VendorId:X4}:{attrs.ProductId:X4}");
-            return new HidGamepadDevice(path, handle, preparsed, caps.InputReportByteLength, x, y, hat,
+            return new HidGamepadDevice(path, handle, preparsed, caps.InputReportByteLength, x, y, rx, ry, hat,
                 attrs.VendorId, attrs.ProductId, name);
         }
         catch
@@ -132,11 +143,18 @@ internal sealed class HidGamepadDevice : IDisposable
         }
     }
 
-    private static void ReadValueRanges(IntPtr preparsed, ushort valueCapsCount,
-        out ValueRange? x, out ValueRange? y, out ValueRange? hat)
+    /// <summary>
+    /// Eixos publicados pelo controle. O analógico esquerdo é sempre X/Y; o direito não tem um padrão:
+    /// a maioria dos controles (inclusive o 8BitDo em D-input) usa Z/Rz, outros usam Rx/Ry — o primeiro
+    /// par presente vale. Controles que não publicam nenhum dos dois ficam sem analógico direito.
+    /// </summary>
+    private static void ReadAxes(IntPtr preparsed, ushort valueCapsCount,
+        out Axis? x, out Axis? y, out Axis? rx, out Axis? ry, out Axis? hat)
     {
-        x = y = hat = null;
+        x = y = rx = ry = hat = null;
         if (valueCapsCount == 0) return;
+
+        Axis? z = null, rz = null, rxRaw = null, ryRaw = null;
 
         var list = new NativeMethods.HidpValueCaps[valueCapsCount];
         ushort count = valueCapsCount;
@@ -153,19 +171,30 @@ internal sealed class HidGamepadDevice : IDisposable
             ushort first = vc.UsageMin;
             ushort last = vc.IsRange != 0 ? vc.UsageMax : vc.UsageMin;
 
+            ushort bits = vc.BitSize;
             int min = vc.LogicalMin;
             int max = vc.LogicalMax;
             if (max < min)
             {
                 // hid.dll estende o sinal de campos sem sinal (ex.: 0..65535 vira 0..-1).
-                max = (int)((1L << vc.BitSize) - 1);
+                max = (int)((1L << bits) - 1);
             }
 
-            var range = new ValueRange(min, max, vc.BitSize);
-            if (first <= UsageX && UsageX <= last) x ??= range;
-            if (first <= UsageY && UsageY <= last) y ??= range;
-            if (first <= UsageHat && UsageHat <= last) hat ??= range;
+            Axis Range(ushort usage) => new(usage, min, max, bits);
+            bool Has(ushort usage) => first <= usage && usage <= last;
+
+            if (Has(UsageX)) x ??= Range(UsageX);
+            if (Has(UsageY)) y ??= Range(UsageY);
+            if (Has(UsageZ)) z ??= Range(UsageZ);
+            if (Has(UsageRz)) rz ??= Range(UsageRz);
+            if (Has(UsageRx)) rxRaw ??= Range(UsageRx);
+            if (Has(UsageRy)) ryRaw ??= Range(UsageRy);
+            if (Has(UsageHat)) hat ??= Range(UsageHat);
         }
+
+        // Z/Rz primeiro (o mais comum); Rx/Ry como alternativa. Só vale com os dois eixos do par.
+        if (z is not null && rz is not null) (rx, ry) = (z, rz);
+        else if (rxRaw is not null && ryRaw is not null) (rx, ry) = (rxRaw, ryRaw);
     }
 
     private static unsafe string? ReadProductName(SafeFileHandle handle)
@@ -223,11 +252,11 @@ internal sealed class HidGamepadDevice : IDisposable
         }
 
         bool up = false, down = false, left = false, right = false;
-        if (_hat is { } hatRange && TryGetValue(UsageHat, hatRange, report, length, out var hatRaw))
+        if (_hat is { } hatAxis && TryGetValue(hatAxis, report, length, out var hatRaw))
         {
             // 0 = cima, sentido horário até 7 = cima-esquerda; fora do intervalo lógico = centro.
-            int dir = hatRaw - hatRange.Min;
-            if (hatRaw >= hatRange.Min && hatRaw <= hatRange.Max && dir <= 7)
+            int dir = hatRaw - hatAxis.Min;
+            if (hatRaw >= hatAxis.Min && hatRaw <= hatAxis.Max && dir <= 7)
             {
                 up = dir is 7 or 0 or 1;
                 right = dir is 1 or 2 or 3;
@@ -236,38 +265,46 @@ internal sealed class HidGamepadDevice : IDisposable
             }
         }
 
-        short x = 0, y = 0;
-        if (_x is { } xr && TryGetValue(UsageX, xr, report, length, out var xv)) x = Normalize(xv, xr);
-        if (_y is { } yr && TryGetValue(UsageY, yr, report, length, out var yv)) y = (short)-Normalize(yv, yr);
+        var (x, y) = ReadStick(_x, _y, report, length);
+        var (rx, ry) = ReadStick(_rx, _ry, report, length);
 
-        return new HidRawState(mask, up, down, left, right, x, y);
+        return new HidRawState(mask, up, down, left, right, x, y, rx, ry);
     }
 
-    private bool TryGetValue(ushort usage, ValueRange range, byte[] report, uint length, out int value)
+    /// <summary>Par de eixos de um analógico, normalizado como no XInput (Y positivo para cima).</summary>
+    private (short X, short Y) ReadStick(Axis? xAxis, Axis? yAxis, byte[] report, uint length)
+    {
+        short x = 0, y = 0;
+        if (xAxis is { } xa && TryGetValue(xa, report, length, out var xv)) x = Normalize(xv, xa);
+        if (yAxis is { } ya && TryGetValue(ya, report, length, out var yv)) y = (short)-Normalize(yv, ya);
+        return (x, y);
+    }
+
+    private bool TryGetValue(Axis axis, byte[] report, uint length, out int value)
     {
         value = 0;
-        if (NativeMethods.HidP_GetUsageValue(NativeMethods.HidP_Input, UsagePageGenericDesktop, 0, usage, out var raw, _preparsed, report, length)
+        if (NativeMethods.HidP_GetUsageValue(NativeMethods.HidP_Input, UsagePageGenericDesktop, 0, axis.Usage, out var raw, _preparsed, report, length)
             != NativeMethods.HIDP_STATUS_SUCCESS)
         {
             return false;
         }
 
         value = (int)raw;
-        if (range.Min < 0 && range.BitSize is > 0 and < 32)
+        if (axis.Min < 0 && axis.BitSize is > 0 and < 32)
         {
             // Campo com sinal: estende o bit de sinal.
-            int shift = 32 - range.BitSize;
+            int shift = 32 - axis.BitSize;
             value = (int)(raw << shift) >> shift;
         }
 
         return true;
     }
 
-    private static short Normalize(int value, ValueRange range)
+    private static short Normalize(int value, Axis axis)
     {
-        long span = (long)range.Max - range.Min;
+        long span = (long)axis.Max - axis.Min;
         if (span <= 0) return 0;
-        double norm = ((value - range.Min) * 2.0 / span) - 1.0;
+        double norm = ((value - axis.Min) * 2.0 / span) - 1.0;
         norm = Math.Clamp(norm, -1.0, 1.0);
         return (short)Math.Round(norm * short.MaxValue);
     }
