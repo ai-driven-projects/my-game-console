@@ -48,10 +48,11 @@ public sealed partial class ConsoleForm : Form
     }
 
     private const float GameCapsuleAspect = 2f / 3f;
-    // Os jogos são o destaque da tela; "Sistema" fica em cartões mais baixos e largos (cabem os nomes).
+    // Os jogos (capas) são o destaque da tela; embaixo, cartões mais largos que altos com o Big Picture e
+    // as opções do sistema, ocupando até o pé da tela (não há rodapé).
     private const float GamesRowScale = 1.8f;
-    private const float SystemRowScale = 0.86f;
-    private const float SystemTileAspect = 1.3f;
+    private const float SystemRowScale = 1.15f;
+    private const float SystemTileAspect = 1.2f;
 
     private const short StickDeadZone = 16000;
     private static readonly TimeSpan RepeatDelay = TimeSpan.FromMilliseconds(420);
@@ -278,17 +279,8 @@ public sealed partial class ConsoleForm : Form
             OnSelect = () => Confirm("Fechar o My Game Console?", _exitApp),
         });
 
+        // Em cima, só o que se joga; o Big Picture fica com as opções do sistema, embaixo.
         var games = new Row { Title = "Jogos", Scale = GamesRowScale };
-        games.Tiles.Add(new Tile
-        {
-            Glyph = Theme.GlyphPlay,
-            Image = SteamIcon(),
-            Title = "Steam Big Picture",
-            Subtitle = SteamStatusText(),
-            Aspect = GameCapsuleAspect,
-            OnSelect = () => _ = OpenBigPictureFromConsoleAsync(),
-        });
-
         foreach (var game in _library.LoadInstalledGames())
         {
             games.Tiles.Add(new Tile
@@ -316,6 +308,15 @@ public sealed partial class ConsoleForm : Form
         }
 
         var system = new Row { Title = "Sistema", Scale = SystemRowScale };
+        system.Tiles.Add(new Tile
+        {
+            Glyph = Theme.GlyphPlay,
+            Image = SteamIcon(),
+            Title = "Steam Big Picture",
+            Aspect = SystemTileAspect,
+            Subtitle = SteamStatusText(),
+            OnSelect = () => _ = OpenBigPictureFromConsoleAsync(),
+        });
         system.Tiles.Add(new Tile
         {
             Glyph = Theme.GlyphGame,
@@ -352,7 +353,7 @@ public sealed partial class ConsoleForm : Form
         });
 
         _rows.Add(power);
-        _rows.Add(games);
+        if (games.Tiles.Count > 0) _rows.Add(games); // sem jogos nem atalhos, a fileira some (e a 1 vira o Sistema)
         _rows.Add(system);
 
         _row = Math.Clamp(_row, 0, _rows.Count - 1);
@@ -360,8 +361,13 @@ public sealed partial class ConsoleForm : Form
 
         if (selectedTitle is not null && CurrentTile?.Title != selectedTitle)
         {
-            int col = _rows[_row].Tiles.FindIndex(t => t.Title == selectedTitle);
-            if (col >= 0) _col = col;
+            for (int r = 0; r < _rows.Count; r++)
+            {
+                int col = _rows[r].Tiles.FindIndex(t => t.Title == selectedTitle);
+                if (col < 0) continue;
+                (_row, _col) = (r, col);
+                break;
+            }
         }
     }
 
@@ -876,8 +882,7 @@ public sealed partial class ConsoleForm : Form
         }
         else
         {
-            DrawRows(g, w, h);
-            DrawFooter(g, w, h);
+            DrawRows(g, w, h); // sem rodapé: o espaço vai para os cartões de baixo
         }
 
         DrawVersion(g, w, h);
@@ -1227,7 +1232,7 @@ public sealed partial class ConsoleForm : Form
                 }
 
                 // Capas já trazem o nome: o título embaixo só aparece no selecionado. Os cartões sempre têm.
-                // A descrição do selecionado fica no rodapé (DrawFooter), não aqui.
+                // A descrição dos itens não aparece na tela inicial.
                 if (!capsule || selected)
                 {
                     float labelW = capsule ? Math.Max(rect.Width + gap * 0.8f, baseTile * 2.6f) : rect.Width + gap * 0.8f;
@@ -1283,44 +1288,7 @@ public sealed partial class ConsoleForm : Form
         if (rect.Right > w - mx * 0.5f) rect.X = w - mx * 0.5f - rect.Width;
     }
 
-    /// <summary>
-    /// Rodapé da tela inicial, como a faixa de baixo do Big Picture: uma linha fina e o rótulo do item
-    /// selecionado (nome e o que ele faz), seja um jogo, um cartão do Sistema ou um botão da barra do alto.
-    /// </summary>
-    private void DrawFooter(Graphics g, int w, int h)
-    {
-        float u = h / 100f;
-        float mx = w * 0.06f;
-        float lineY = h - u * 8.5f;
-        float cy = h - u * 4.6f;
-
-        using (var linePen = new Pen(Color.FromArgb(45, Theme.Muted), u * 0.1f))
-        {
-            g.DrawLine(linePen, mx, lineY, w - mx, lineY);
-        }
-
-        if (CurrentTile is not { } tile || (_notice is not null && DateTime.Now < _noticeUntil)) return;
-
-        using var titleFont = new Font("Segoe UI", u * 2.0f, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var font = new Font("Segoe UI", u * 1.9f, GraphicsUnit.Pixel);
-        using var textBrush = new SolidBrush(Theme.Text);
-        using var mutedBrush = new SolidBrush(Theme.Muted);
-        var leftMid = new StringFormat { LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
-
-        // até a versão, no canto direito
-        float right = w - mx - u * 14f;
-        var titleSize = g.MeasureString(tile.Title, titleFont, PointF.Empty, leftMid);
-        float titleW = Math.Min(titleSize.Width, (right - mx) * 0.5f);
-        g.DrawString(tile.Title, titleFont, textBrush, new RectangleF(mx, cy - u * 2f, titleW, u * 4f), leftMid);
-
-        var description = tile.LiveSubtitle?.Invoke() ?? tile.Subtitle;
-        if (string.IsNullOrWhiteSpace(description)) return;
-
-        float x = mx + titleW + u * 1.2f;
-        g.DrawString("·   " + description, font, mutedBrush, new RectangleF(x, cy - u * 2f, Math.Max(0, right - x), u * 4f), leftMid);
-    }
-
-    /// <summary>Versão do app, discreta, no canto inferior direito (abaixo do rodapé). Avisa quando há versão nova.</summary>
+    /// <summary>Versão do app, discreta, no canto inferior direito (abaixo dos cartões). Avisa quando há versão nova.</summary>
     private void DrawVersion(Graphics g, int w, int h)
     {
         float u = h / 100f;
@@ -1488,7 +1456,7 @@ public sealed partial class ConsoleForm : Form
         var size = g.MeasureString(_notice, font);
         float pw = Math.Min(size.Width + u * 5f, w * 0.8f);
         float ph = u * 5.5f;
-        // Na tela inicial o aviso ocupa a faixa do rodapé (no lugar do rótulo); nas páginas, fica acima dele.
+        // Na tela inicial o aviso fica no pé da tela, por cima dos nomes dos cartões enquanto durar; nas páginas, acima do rodapé delas.
         float top = _settingsOpen ? h - u * 15f : h - u * 4.6f - ph / 2f;
         var rect = new RectangleF((w - pw) / 2f, top, pw, ph);
 
