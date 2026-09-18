@@ -94,6 +94,11 @@ public sealed partial class ConsoleForm : Form
     private bool _confirmYes;         // esquerda selecionada
     private RectangleF _confirmYesRect;
     private RectangleF _confirmNoRect;
+    // Texto longo opcional entre a pergunta e os botões (ex.: notas da versão), rolado com ▲▼ ou a roda do mouse.
+    private string? _confirmDetails;
+    private float _confirmDetailsScroll;    // em pixels
+    private float _confirmDetailsMaxScroll; // calculado no desenho
+    private float _confirmDetailsStep;      // altura de uma linha, calculada no desenho
 
     // Aviso temporário (erros, feedback de ações).
     private string? _notice;
@@ -492,6 +497,7 @@ public sealed partial class ConsoleForm : Form
         if (_confirmText is not null)
         {
             if (dx != 0) _confirmYes = dx < 0;
+            if (dy != 0) ScrollConfirmDetails(dy * 3);
             Invalidate();
             return;
         }
@@ -596,11 +602,15 @@ public sealed partial class ConsoleForm : Form
         Hide();
     }
 
-    private void Confirm(string question, Action action) =>
-        Choose(question, "Sim", action, "Não", null, defaultLeft: false); // padrão seguro: "Não"
+    private void Confirm(string question, Action action, string? details = null) =>
+        Choose(question, "Sim", action, "Não", null, defaultLeft: false, details); // padrão seguro: "Não"
 
-    /// <summary>Overlay com duas opções (esquerda e direita), cada uma com sua ação. ◀ ▶ escolhe, A confirma, B cancela.</summary>
-    private void Choose(string question, string leftLabel, Action? leftAction, string rightLabel, Action? rightAction, bool defaultLeft)
+    /// <summary>
+    /// Overlay com duas opções (esquerda e direita), cada uma com sua ação. ◀ ▶ escolhe, A confirma, B cancela.
+    /// Com <paramref name="details"/>, o painel cresce e mostra o texto numa caixa rolável (▲▼).
+    /// </summary>
+    private void Choose(string question, string leftLabel, Action? leftAction, string rightLabel, Action? rightAction,
+        bool defaultLeft, string? details = null)
     {
         _confirmText = question;
         _confirmYesLabel = leftLabel;
@@ -608,7 +618,23 @@ public sealed partial class ConsoleForm : Form
         _confirmAction = leftAction;
         _confirmNoAction = rightAction;
         _confirmYes = defaultLeft;
+        _confirmDetails = string.IsNullOrWhiteSpace(details) ? null : details.Trim();
+        _confirmDetailsScroll = 0;
+        _confirmDetailsMaxScroll = 0;
         Invalidate();
+    }
+
+    private void ScrollConfirmDetails(int lines)
+    {
+        if (_confirmDetails is null || _confirmDetailsStep <= 0) return;
+        _confirmDetailsScroll = Math.Clamp(_confirmDetailsScroll + lines * _confirmDetailsStep, 0, _confirmDetailsMaxScroll);
+        Invalidate();
+    }
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        base.OnMouseWheel(e);
+        if (_confirmText is not null) ScrollConfirmDetails(-Math.Sign(e.Delta) * 3);
     }
 
     private void Run(Action? action)
@@ -1325,8 +1351,9 @@ public sealed partial class ConsoleForm : Form
             g.FillRectangle(dim, 0, 0, w, h);
         }
 
-        float pw = Math.Max(w * 0.5f, u * 70f);
-        float ph = u * 30f;
+        bool hasDetails = _confirmDetails is not null;
+        float pw = Math.Min(w - u * 4f, Math.Max(w * (hasDetails ? 0.56f : 0.5f), u * (hasDetails ? 90f : 70f)));
+        float ph = hasDetails ? u * 72f : u * 30f;
         var panel = new RectangleF((w - pw) / 2f, (h - ph) / 2f, pw, ph);
 
         using var panelBrush = new SolidBrush(Theme.Tile);
@@ -1348,19 +1375,30 @@ public sealed partial class ConsoleForm : Form
 
         var center = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
 
+        float questionH = hasDetails ? u * 10f : ph * 0.42f;
         g.DrawString(_confirmText, qFont, textBrush,
-            new RectangleF(panel.X + u * 2f, panel.Y + u * 2f, panel.Width - u * 4f, ph * 0.42f), center);
+            new RectangleF(panel.X + u * 2f, panel.Y + u * 2f, panel.Width - u * 4f, questionH), center);
 
-        float bw = pw * 0.38f;
+        float bw = Math.Min(pw * 0.38f, u * 34f);
         float bh = u * 7f;
         float by = panel.Bottom - bh - u * 6f;
         _confirmYesRect = new RectangleF(panel.X + pw * 0.5f - bw - u * 1.5f, by, bw, bh);
         _confirmNoRect = new RectangleF(panel.X + pw * 0.5f + u * 1.5f, by, bw, bh);
 
+        if (hasDetails)
+        {
+            var box = new RectangleF(panel.X + u * 3f, panel.Y + u * 2f + questionH + u * 1f,
+                panel.Width - u * 6f, by - u * 3f - (panel.Y + u * 2f + questionH + u * 1f));
+            DrawConfirmDetails(g, box, u);
+        }
+
         DrawButton(g, _confirmYesRect, _confirmYesLabel, _confirmYes);
         DrawButton(g, _confirmNoRect, _confirmNoLabel, !_confirmYes);
 
-        g.DrawString("◀ ▶ escolher   ·   A confirmar   ·   B cancelar", hintFont, mutedBrush,
+        var hint = hasDetails && _confirmDetailsMaxScroll > 0
+            ? "▲ ▼ rolar   ·   ◀ ▶ escolher   ·   A confirmar   ·   B cancelar"
+            : "◀ ▶ escolher   ·   A confirmar   ·   B cancelar";
+        g.DrawString(hint, hintFont, mutedBrush,
             new RectangleF(panel.X, panel.Bottom - u * 4.5f, panel.Width, u * 3f), center);
 
         void DrawButton(Graphics gr, RectangleF rect, string text, bool selected)
@@ -1368,6 +1406,64 @@ public sealed partial class ConsoleForm : Form
             using var path = RoundedRect(rect, u * 1.2f);
             gr.FillPath(selected ? accentBrush : buttonBrush, path);
             gr.DrawString(text, bFont, selected ? darkBrush : textBrush, rect, center);
+        }
+    }
+
+    /// <summary>
+    /// Caixa rolável com o texto longo do overlay. Uma linha que termina em ":" vira título de seção; as
+    /// demais, parágrafos com quebra automática. Atualiza o limite e o passo da rolagem para a navegação.
+    /// </summary>
+    private void DrawConfirmDetails(Graphics g, RectangleF box, float u)
+    {
+        using var boxBrush = new SolidBrush(Color.FromArgb(120, Theme.BgTop));
+        using (var path = RoundedRect(box, u * 1.2f))
+        {
+            g.FillPath(boxBrush, path);
+        }
+
+        var inner = RectangleF.Inflate(box, -u * 2.2f, -u * 1.6f);
+        using var font = new Font("Segoe UI", u * 1.9f, GraphicsUnit.Pixel);
+        using var headFont = new Font("Segoe UI", u * 2.0f, FontStyle.Bold, GraphicsUnit.Pixel);
+        using var textBrush = new SolidBrush(Theme.Text);
+        using var headBrush = new SolidBrush(Theme.Accent);
+        var fmt = new StringFormat(StringFormat.GenericDefault);
+
+        _confirmDetailsStep = font.GetHeight(g);
+
+        var state = g.Save();
+        g.SetClip(inner);
+        float y = inner.Y - _confirmDetailsScroll;
+        foreach (var raw in _confirmDetails!.Split('\n'))
+        {
+            var line = raw.TrimEnd();
+            if (line.Length == 0)
+            {
+                y += _confirmDetailsStep * 0.5f;
+                continue;
+            }
+
+            bool heading = line.EndsWith(':');
+            var f = heading ? headFont : font;
+            var size = g.MeasureString(line, f, (int)inner.Width, fmt);
+            if (heading) y += _confirmDetailsStep * 0.3f;
+            g.DrawString(line, f, heading ? headBrush : textBrush, new RectangleF(inner.X, y, inner.Width, size.Height + 1), fmt);
+            y += size.Height + (heading ? _confirmDetailsStep * 0.15f : _confirmDetailsStep * 0.25f);
+        }
+        g.Restore(state);
+
+        float contentH = y + _confirmDetailsScroll - inner.Y;
+        _confirmDetailsMaxScroll = Math.Max(0, contentH - inner.Height);
+        _confirmDetailsScroll = Math.Min(_confirmDetailsScroll, _confirmDetailsMaxScroll);
+
+        // barra de rolagem discreta quando o texto não cabe
+        if (_confirmDetailsMaxScroll > 0)
+        {
+            float trackH = inner.Height;
+            float thumbH = Math.Max(u * 3f, trackH * inner.Height / contentH);
+            float thumbY = inner.Y + (trackH - thumbH) * (_confirmDetailsScroll / _confirmDetailsMaxScroll);
+            using var thumb = new SolidBrush(Color.FromArgb(150, Theme.Muted));
+            using var thumbPath = RoundedRect(new RectangleF(box.Right - u * 1.1f, thumbY, u * 0.45f, thumbH), u * 0.22f);
+            g.FillPath(thumb, thumbPath);
         }
     }
 

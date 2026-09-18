@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Text.RegularExpressions;
 using MyGameConsole.App;
 using MyGameConsole.Models;
 using MyGameConsole.Services;
@@ -330,13 +331,47 @@ public sealed partial class ConsoleForm
     {
         var u = _updates.Available!;
         Confirm($"Baixar e instalar a versão {u.VersionText}? O My Game Console será fechado para atualizar.",
-            () => _ = DownloadAndInstallUpdateAsync());
+            () => _ = DownloadAndInstallUpdateAsync(), ReleaseNotesText(u));
     }
 
     private void ConfirmInstallUpdate()
     {
         var u = _updates.Available!;
-        Confirm($"Instalar a versão {u.VersionText} agora? O My Game Console será fechado para atualizar.", InstallUpdate);
+        Confirm($"Instalar a versão {u.VersionText} agora? O My Game Console será fechado para atualizar.", InstallUpdate,
+            ReleaseNotesText(u));
+    }
+
+    /// <summary>
+    /// Notas da release (markdown do GitHub) como texto simples para o overlay: títulos viram linhas terminadas
+    /// em ":" (que o overlay destaca), itens de lista ganham "•" e somem negrito, código e o endereço dos links.
+    /// </summary>
+    private static string ReleaseNotesText(UpdateInfo info)
+    {
+        if (string.IsNullOrWhiteSpace(info.Notes)) return "Esta versão não tem notas publicadas.";
+
+        var lines = new List<string>();
+        foreach (var raw in info.Notes.Replace("\r", string.Empty).Split('\n'))
+        {
+            var line = raw.Trim();
+            line = Regex.Replace(line, @"!?\[([^\]]*)\]\([^)]*\)", "$1"); // [texto](url) -> texto
+            line = line.Replace("**", string.Empty).Replace("__", string.Empty).Replace("`", string.Empty);
+
+            if (line.StartsWith('#'))
+            {
+                var title = line.TrimStart('#').Trim();
+                if (title.Length > 0) lines.Add(title.TrimEnd(':') + ":");
+            }
+            else if (line.StartsWith("- ") || line.StartsWith("* "))
+            {
+                lines.Add("•  " + line[2..].Trim());
+            }
+            else
+            {
+                lines.Add(line);
+            }
+        }
+
+        return string.Join('\n', lines).Trim();
     }
 
     private async Task DownloadAndInstallUpdateAsync()

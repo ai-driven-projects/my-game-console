@@ -70,7 +70,7 @@ esconder a área de trabalho, reagir à conexão de controles, atalhos rápidos 
 - **Atualizações pelo GitHub**: o app consulta as [releases do repositório](https://github.com/ai-driven-projects/my-game-console/releases)
   ao iniciar (opcional) e pelo menu da bandeja ou pelo botão de atualizações no alto da tela do console, que
   ganha uma marca verde quando há versão nova e mostra o progresso do download em volta dele.
-  Havendo versão nova, baixa o MSI, confere o SHA-256 publicado e executa o instalador, que fecha o app,
+  Havendo versão nova, a confirmação mostra as notas da versão (roláveis com ▲▼) e, com o seu sim, baixa o MSI, confere o SHA-256 publicado e executa o instalador, que fecha o app,
   atualiza e o reabre. Nada é baixado nem instalado sem confirmação.
 - **Configurações** persistidas em `%LocalAppData%\MyGameConsole\settings.json`.
 - Início silencioso: o app vai direto para a bandeja, sem balão de boas-vindas. Instância única (uma segunda
