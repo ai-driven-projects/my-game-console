@@ -653,6 +653,12 @@ public sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
+        if (!recording && _recorder.LastWarning is { } warning)
+        {
+            _tray.ShowBalloonTip(8000, AppTitle, $"Gravação salva: {file}. {warning}", ToolTipIcon.Warning);
+            return;
+        }
+
         // O começo não tem aviso: a contagem já avisou, e um aviso agora sairia no vídeo. O fim avisa onde salvou.
         if (!recording) ShowRecordingMessage($"Gravação salva: {file}", Theme.Success);
     }

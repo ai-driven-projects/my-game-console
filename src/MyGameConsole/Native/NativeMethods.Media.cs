@@ -97,6 +97,8 @@ internal static unsafe partial class NativeMethods
     internal const uint AUDCLNT_SHAREMODE_SHARED = 0;
     internal const uint AUDCLNT_STREAMFLAGS_LOOPBACK = 0x00020000;
     internal const uint AUDCLNT_BUFFERFLAGS_SILENT = 0x2;
+    /// <summary>O horário (QPC) do pacote não é confiável: vale o estimado a partir do pacote anterior.</summary>
+    internal const uint AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR = 0x4;
 
     // ---------- estruturas ----------
 

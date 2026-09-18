@@ -44,6 +44,21 @@ internal static partial class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool IsIconic(IntPtr hWnd);
 
+    // Minimizar as janelas dos outros apps ao ir para a área de trabalho (ver App/ForegroundWindow.cs).
+
+    [LibraryImport("user32.dll", EntryPoint = "ShowWindowAsync")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    internal static partial IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetWindow")]
+    internal static partial IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+    internal const int GWL_EXSTYLE = -20;
+    internal const uint GW_OWNER = 4;
+
     [LibraryImport("user32.dll", EntryPoint = "GetForegroundWindow")]
     internal static partial IntPtr GetForegroundWindow();
 
@@ -93,8 +108,14 @@ internal static partial class NativeMethods
     internal const uint WM_COMMAND = 0x0111;
     internal const uint WM_HOTKEY = 0x0312;
 
-    /// <summary>Comando do menu de contexto da área de trabalho: "Mostrar ícones da área de trabalho".</summary>
+    /// <summary>
+    /// Comando do menu de contexto da área de trabalho: "Mostrar ícones da área de trabalho". Alterna (não liga
+    /// nem desliga), e o Explorer guarda o resultado só em <c>Shell\Bags\1\Desktop\FFlags</c> (bit FWF_NOICONS).
+    /// </summary>
     internal const int CMD_TOGGLE_DESKTOP_ICONS = 0x7402;
+
+    /// <summary>FWF_NOICONS: bit de "ícones escondidos" em <c>Shell\Bags\1\Desktop\FFlags</c>.</summary>
+    internal const int FWF_NOICONS = 0x1000;
 
     internal const uint MOD_ALT = 0x0001;
     internal const uint MOD_CONTROL = 0x0002;

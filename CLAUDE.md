@@ -24,6 +24,9 @@ Se `dotnet` não estiver no PATH da sessão, use `C:\Program Files\dotnet\dotnet
   ao ativar, reaplica no início do app e só restaura ao desativar. Novos ajustes de desktop entram em
   `DesktopTweaksService` e são ligados/desligados em `GameModeService.Apply`/`Restore`. Todo ajuste novo
   também entra no checklist da tela do console (`Forms/ConsoleForm.GameMode.cs`, via `GameModeService.Inspect`).
+- Ícones da área de trabalho (`DesktopTweaksService.SetDesktopIconsHidden`): o comando do Explorer só alterna e
+  grava em `Shell\Bags\1\Desktop\FFlags` (bit `FWF_NOICONS`), nunca em `Advanced\HideIcons`. Decida sempre pelo
+  estado na tela (a `SysListView32` visível ou não), nunca pelo registro, e grave os dois valores.
 - Ajustes que exigem administrador (ex.: senha ao acordar, `PowerService`) só pedem UAC em ação do usuário
   (`ReapplyIfEnabled(interactive: true)`); no início do app (`interactive: false`) ficam pendentes no checklist.
   O UAC é obtido relançando o próprio exe elevado com `--wake-password` (tratado em `Program.cs`).
@@ -65,7 +68,11 @@ Se `dotnet` não estiver no PATH da sessão, use `C:\Program Files\dotnet\dotnet
 - Gravação da tela: `ScreenRecorderService` + `Services/Recording/` (Desktop Duplication → textura, `AudioCapture`
   do WASAPI → PCM 48 kHz, `Mp4Writer` com o Sink Writer do Media Foundation), tudo numa thread só, alinhado pelo QPC.
   O som tem até duas capturas (loopback da saída e, opcional, o microfone), somadas numa faixa só no `Session`
-  pelo horário de cada trecho, com 200 ms de atraso para as duas chegarem antes de ir para o arquivo.
+  pelo horário de cada trecho, com 200 ms de atraso para as duas chegarem antes de ir para o arquivo. Nunca confie
+  cegamente no horário do pacote: com `TIMESTAMP_ERROR`, zero ou fora de [agora − 2 s, agora + 500 ms] ele é
+  recolocado logo depois do anterior — um único horário no futuro já emudeceu o microfone a gravação inteira.
+  Cada gravação anota o que cada captura recebeu em `%LocalAppData%\MyGameConsole\gravação.log`, e o fim da
+  gravação avisa (`LastWarning`) se o microfone estava ligado e não saiu no vídeo.
   As interfaces COM (DXGI, D3D11, MF, WASAPI) são chamadas pela vtable em `Native/NativeMethods.Media.cs`, sem RCW,
   para liberar texturas e amostras a cada quadro; os números dos slots seguem a ordem dos cabeçalhos do SDK
   (contando os 3 do IUnknown) — conferir antes de acrescentar um método. O encoder recebe a textura direto

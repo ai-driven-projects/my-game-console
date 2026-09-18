@@ -37,6 +37,12 @@ public sealed class ScreenRecorderService : IDisposable
     /// <summary>Por que a última gravação parou sozinha (erro), ou nulo.</summary>
     public string? LastError { get; private set; }
 
+    /// <summary>Problema que não parou a última gravação, mas o usuário precisa saber (ex.: microfone sem som), ou nulo.</summary>
+    public string? LastWarning { get; private set; }
+
+    /// <summary>Registro das capturas de som de cada gravação (dispositivo, pacotes, erros), para investigar problemas.</summary>
+    public string LogPath => Path.Combine(_settings.Directory, "gravação.log");
+
     /// <summary>Tempo gravado até agora.</summary>
     public TimeSpan Elapsed => IsRecording && _startedAt != 0
         ? Stopwatch.GetElapsedTime(Interlocked.Read(ref _startedAt))
@@ -92,6 +98,7 @@ public sealed class ScreenRecorderService : IDisposable
             _stopRequested = false;
             _startedAt = 0;
             LastError = null;
+            LastWarning = null;
             CurrentFile = path;
 
             var thread = new Thread(() => Record(options, ready, e => startError = e))
@@ -191,6 +198,7 @@ public sealed class ScreenRecorderService : IDisposable
         finally
         {
             foreach (var capture in audio) capture.Dispose();
+            if (started) ReportAudio(options, audio);
             writer?.Dispose();
             screen?.Dispose();
             if (mfStarted) MFShutdown();
@@ -206,6 +214,39 @@ public sealed class ScreenRecorderService : IDisposable
                 lock (_gate) _thread = null;
                 RaiseStateChanged();
             }
+        }
+    }
+
+    /// <summary>
+    /// Anota no <see cref="LogPath"/> o que cada captura de som recebeu e, se o microfone estava ligado e não
+    /// entregou nenhum som, deixa o aviso em <see cref="LastWarning"/> (a gravação em si foi salva).
+    /// </summary>
+    private void ReportAudio(Options options, List<AudioCapture> audio)
+    {
+        var mic = audio.FirstOrDefault(a => a.IsMicrophone);
+        if (mic is not null && (mic.Stats.Peak == 0 || mic.Stats.MixedFrames == 0))
+        {
+            var s = mic.Stats;
+            string why = s.Opens == 0 ? $"o Windows não deixou abrir o microfone ({s.LastError ?? "motivo desconhecido"})"
+                : s.Packets == 0 ? "o microfone abriu, mas não mandou nenhum som"
+                : s.SilentPackets == s.Packets ? "o Windows só entregou silêncio (microfone mudo ou bloqueado na privacidade)"
+                : s.Peak == 0 ? "tudo o que chegou dele era silêncio"
+                : "o som chegou, mas fora de hora, e a gravação o descartou";
+            LastWarning = $"O microfone não saiu na gravação: {why}.";
+        }
+
+        try
+        {
+            if (File.Exists(LogPath) && new FileInfo(LogPath).Length > 256 * 1024) File.Delete(LogPath);
+            var lines = new List<string> { $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {Path.GetFileName(options.Path)}" };
+            foreach (var capture in audio) lines.Add($"  {(capture.IsMicrophone ? "microfone" : "som do PC")}: {capture.Stats}");
+            if (audio.Count == 0) lines.Add("  sem som (desligado nas configurações)");
+            if (LastWarning is not null) lines.Add($"  aviso: {LastWarning}");
+            File.AppendAllLines(LogPath, lines);
+        }
+        catch
+        {
+            // o registro é só para investigar: sem ele, a gravação segue igual
         }
     }
 
@@ -257,6 +298,12 @@ public sealed class ScreenRecorderService : IDisposable
         private const long OverlapToleranceFrames = Rate / 10;  // 100 ms
         /// <summary>Trecho com horário muito à frente (relógio estranho do dispositivo) é descartado.</summary>
         private const long MaxAheadFrames = Rate * 5;
+        /// <summary>
+        /// Até onde um pacote pode parecer "no futuro": o loopback data o som pela hora em que ele toca, que num fone
+        /// Bluetooth fica uns 200 ms depois de ele ser entregue. Além disso (ou mais velho que 2 s), o horário é inválido.
+        /// </summary>
+        private const long FutureToleranceFrames = Rate / 2;    // 500 ms
+        private const long MaxAgeFrames = Rate * 2;
 
         private readonly long[] _cursors = CreateCursors(sources.Count);
         private readonly short[] _output = new short[Rate / 10 * Channels];
@@ -292,27 +339,39 @@ public sealed class ScreenRecorderService : IDisposable
         {
             if (!writer.HasAudio) return;
 
+            long nowFrames = FramesAt(now);
             for (int s = 0; s < sources.Count; s++)
             {
-                while (sources[s].Chunks.TryDequeue(out var chunk)) Mix(s, chunk);
+                while (sources[s].Chunks.TryDequeue(out var chunk)) Mix(s, chunk, nowFrames);
             }
 
             long expected = FramesAt(now) - (final ? 0 : MixDelayFrames);
             if (expected > _audioFrames) Flush(writer, expected - _audioFrames);
         }
 
-        private void Mix(int source, AudioChunk chunk)
+        private void Mix(int source, AudioChunk chunk, long nowFrames)
         {
+            var stats = sources[source].Stats;
             long start = FramesAt(chunk.Time);
             ReadOnlySpan<short> samples = chunk.Samples;
+            long cursor = _cursors[source];
+
+            // Horário impossível (no futuro, ou velho demais para ainda estar no buffer da captura): o pacote entra
+            // logo depois do anterior da mesma captura, ou termina agora. Sem isso, um único pacote com horário
+            // errado levava o cursor da captura para o futuro e todos os seguintes eram descartados (microfone mudo).
+            long chunkFrames = samples.Length / Channels;
+            if (start + chunkFrames > nowFrames + FutureToleranceFrames || start < nowFrames - MaxAgeFrames)
+            {
+                stats.RetimedPackets++;
+                start = cursor >= 0 && cursor <= nowFrames + GapToleranceFrames ? cursor : nowFrames - chunkFrames;
+            }
 
             // O horário de cada pacote varia uns ms: trechos seguidos da mesma captura entram colados ao anterior,
             // e uma sobreposição grande (a mesma captura repetindo um instante) é cortada.
-            long cursor = _cursors[source];
             if (cursor >= 0 && start < cursor - OverlapToleranceFrames)
             {
                 long skip = cursor - start;
-                if (skip * Channels >= samples.Length) return;
+                if (skip * Channels >= samples.Length) { stats.LateFrames += chunkFrames; return; }
                 samples = samples[(int)(skip * Channels)..];
                 start = cursor;
             }
@@ -327,6 +386,7 @@ public sealed class ScreenRecorderService : IDisposable
             if (start < _audioFrames)
             {
                 long skip = _audioFrames - start;
+                stats.LateFrames += Math.Min(skip, samples.Length / Channels);
                 if (skip * Channels >= samples.Length) return;
                 samples = samples[(int)(skip * Channels)..];
                 start = _audioFrames;
@@ -334,7 +394,8 @@ public sealed class ScreenRecorderService : IDisposable
 
             long offset = start - _audioFrames;
             long frames = samples.Length / Channels;
-            if (offset + frames > MaxAheadFrames) return;
+            if (offset + frames > MaxAheadFrames) { stats.AheadFrames += frames; return; }
+            stats.MixedFrames += frames;
 
             int begin = (int)(offset * Channels);
             int end = begin + samples.Length;

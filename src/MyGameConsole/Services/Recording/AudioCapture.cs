@@ -7,6 +7,32 @@ namespace MyGameConsole.Services.Recording;
 internal readonly record struct AudioChunk(long Time, short[] Samples);
 
 /// <summary>
+/// Resumo de uma captura. Escrito pela thread da captura e lido depois que ela para (ou só para exibir),
+/// então não precisa de trava.
+/// </summary>
+internal sealed class AudioCaptureStats
+{
+    public string? DeviceId;
+    public string? Format;
+    public string? LastError;
+    public int Opens;
+    public long Packets;
+    public long SilentPackets;
+    public long TimestampErrors;
+    /// <summary>Pacotes cujo horário era impossível e a mistura recolocou logo depois do anterior.</summary>
+    public long RetimedPackets;
+    public int Peak;
+    /// <summary>Trechos (em amostras por canal) que a mistura pôs no arquivo, ou descartou por chegarem tarde ou adiantados demais.</summary>
+    public long MixedFrames, LateFrames, AheadFrames;
+
+    public override string ToString() =>
+        $"dispositivo {DeviceId ?? "?"} ({Format ?? "formato ?"}), aberto {Opens}x, {Packets} pacotes " +
+        $"({SilentPackets} silenciosos, {TimestampErrors} sem horário, {RetimedPackets} com horário corrigido), pico {Peak}, " +
+        $"na mistura {MixedFrames / 48000.0:F1} s, descartado {LateFrames / 48000.0:F1} s atrasado e {AheadFrames / 48000.0:F1} s adiantado" +
+        (LastError is null ? "" : $", último erro: {LastError}");
+}
+
+/// <summary>
 /// Captura de som pelo WASAPI: o que está saindo no PC (alto-falantes ou fone, pelo modo loopback) ou o
 /// microfone padrão. Roda numa thread própria e entrega trechos já em PCM 16 bits estéreo 48 kHz em
 /// <see cref="Chunks"/>, cada um com o horário em que foi tocado ou captado — é por ele que a gravação alinha
@@ -37,7 +63,14 @@ internal sealed unsafe class AudioCapture : IDisposable
     private double _resamplePos;
     private float _prevL, _prevR;
 
+    private long _nextTime; // horário estimado do próximo pacote (100 ns, QPC)
+
     public ConcurrentQueue<AudioChunk> Chunks { get; } = new();
+
+    /// <summary>O que a captura recebeu, para o registro da gravação e o aviso de microfone sem som.</summary>
+    public AudioCaptureStats Stats { get; } = new();
+
+    public bool IsMicrophone => _microphone;
 
     /// <param name="microphone">Falso: o som do PC (loopback da saída padrão). Verdadeiro: o microfone padrão.</param>
     public AudioCapture(bool microphone)
@@ -73,9 +106,10 @@ internal sealed unsafe class AudioCapture : IDisposable
                 Thread.Sleep(10);
             }
         }
-        catch
+        catch (Exception ex)
         {
             // sem áudio: a gravação segue com silêncio
+            Stats.LastError = $"{ex.GetType().Name}: {ex.Message}";
         }
         finally
         {
@@ -99,10 +133,12 @@ internal sealed unsafe class AudioCapture : IDisposable
         IntPtr device = IntPtr.Zero, format = IntPtr.Zero;
         try
         {
-            if (Wasapi.GetDefaultEndpoint(_enumerator, _microphone, out device) < 0) return;
+            int hr;
+            if ((hr = Wasapi.GetDefaultEndpoint(_enumerator, _microphone, out device)) < 0) { Fail("sem dispositivo padrão", hr); return; }
             _deviceId = Wasapi.GetId(device);
-            if (Wasapi.Activate(device, Iid.AudioClient, out _client) < 0) return;
-            if (Wasapi.GetMixFormat(_client, out format) < 0) return;
+            Stats.DeviceId = _deviceId;
+            if ((hr = Wasapi.Activate(device, Iid.AudioClient, out _client)) < 0) { Fail("ativar", hr); return; }
+            if ((hr = Wasapi.GetMixFormat(_client, out format)) < 0) { Fail("ler o formato", hr); return; }
 
             byte* f = (byte*)format;
             ushort tag = *(ushort*)f;
@@ -112,20 +148,19 @@ internal sealed unsafe class AudioCapture : IDisposable
             // WAVE_FORMAT_EXTENSIBLE: o tipo real está no SubFormat (1 = PCM, 3 = float).
             uint kind = tag == 0xFFFE ? *(uint*)(f + 24) : tag;
             _float = kind == 3;
-            if (kind is not (1 or 3) || _channels < 1 || _rate < 8000) { Close(); return; }
+            Stats.Format = $"{(_float ? "float" : "PCM")} {_bits} bits, {_channels} canais, {_rate} Hz";
+            if (kind is not (1 or 3) || _channels < 1 || _rate < 8000) { Fail($"formato não suportado (tipo {kind})", 0); Close(); return; }
 
             const long bufferDuration = 2_000_000; // 200 ms
             uint streamFlags = _microphone ? 0 : AUDCLNT_STREAMFLAGS_LOOPBACK;
-            if (Wasapi.Initialize(_client, AUDCLNT_SHAREMODE_SHARED, streamFlags, bufferDuration, format) < 0
-                || Wasapi.GetService(_client, Iid.AudioCaptureClient, out _capture) < 0
-                || Wasapi.Start(_client) < 0)
-            {
-                Close();
-                return;
-            }
+            if ((hr = Wasapi.Initialize(_client, AUDCLNT_SHAREMODE_SHARED, streamFlags, bufferDuration, format)) < 0) { Fail("iniciar", hr); Close(); return; }
+            if ((hr = Wasapi.GetService(_client, Iid.AudioCaptureClient, out _capture)) < 0) { Fail("abrir a captura", hr); Close(); return; }
+            if ((hr = Wasapi.Start(_client)) < 0) { Fail("começar", hr); Close(); return; }
 
+            Stats.Opens++;
             _resamplePos = 0;
             _prevL = _prevR = 0;
+            _nextTime = 0;
         }
         finally
         {
@@ -133,6 +168,11 @@ internal sealed unsafe class AudioCapture : IDisposable
             Com.Release(ref device);
         }
     }
+
+    private void Fail(string stage, int hr) => Stats.LastError = hr == 0 ? stage : $"{stage}: 0x{hr:X8}";
+
+    private static long NowHundredNs() =>
+        (long)(System.Diagnostics.Stopwatch.GetTimestamp() * (10_000_000.0 / System.Diagnostics.Stopwatch.Frequency));
 
     private void Close()
     {
@@ -156,7 +196,23 @@ internal sealed unsafe class AudioCapture : IDisposable
                 {
                     bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
                     var samples = Convert(silent ? null : data, (int)frames);
-                    if (samples.Length > 0) Chunks.Enqueue(new AudioChunk((long)qpc, samples));
+
+                    // Sem horário confiável, o pacote vai logo depois do anterior (ou termina agora, se for o primeiro):
+                    // com o horário inválido (zero) ele cairia no passado e a gravação o descartaria inteiro.
+                    long duration = frames * 10_000_000L / _rate;
+                    long time = (long)qpc;
+                    if ((flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) != 0 || time <= 0)
+                    {
+                        Stats.TimestampErrors++;
+                        time = _nextTime > 0 ? _nextTime : NowHundredNs() - duration;
+                    }
+                    _nextTime = time + duration;
+
+                    Stats.Packets++;
+                    if (silent) Stats.SilentPackets++;
+                    foreach (var s in samples) if (Math.Abs((int)s) > Stats.Peak) Stats.Peak = Math.Abs((int)s);
+
+                    if (samples.Length > 0) Chunks.Enqueue(new AudioChunk(time, samples));
                 }
             }
             finally

@@ -57,10 +57,19 @@ public sealed class DesktopTweaksService
     // Ícones da área de trabalho
     // ------------------------------------------------------------------
 
+    private const string DesktopBagKey = @"Software\Microsoft\Windows\Shell\Bags\1\Desktop";
+
+    /// <summary>
+    /// Os ícones estão escondidos de fato: com o Explorer aberto, pela lista de ícones da área de trabalho;
+    /// sem ele, pelo que o Explorer vai ler ao abrir (FFlags e, na falta dele, HideIcons).
+    /// </summary>
     public bool AreDesktopIconsHidden
     {
         get
         {
+            if (LiveIconsHidden(FindDesktopDefView()) is { } live) return live;
+            if (ReadDesktopFlags() is { } flags) return (flags & NativeMethods.FWF_NOICONS) != 0;
+
             using var key = Registry.CurrentUser.OpenSubKey(ExplorerAdvancedKey);
             return key?.GetValue("HideIcons") is int v && v != 0;
         }
@@ -68,19 +77,49 @@ public sealed class DesktopTweaksService
 
     public void SetDesktopIconsHidden(bool hidden)
     {
-        if (AreDesktopIconsHidden == hidden) return;
-
-        // O explorer só reflete a mudança na hora via o comando "Mostrar ícones da área de trabalho".
+        // O Explorer só reflete a mudança na hora pelo comando "Mostrar ícones da área de trabalho", que alterna:
+        // só é enviado quando o estado na tela é o contrário do pedido. Decidir pelo registro invertia o comando
+        // quando ele e a tela divergiam (o Explorer não atualiza o HideIcons), e os ícones não voltavam.
         var defView = FindDesktopDefView();
-        if (defView != IntPtr.Zero)
+        if (LiveIconsHidden(defView) is { } live && live != hidden)
         {
             NativeMethods.SendMessage(defView, NativeMethods.WM_COMMAND,
                 (IntPtr)NativeMethods.CMD_TOGGLE_DESKTOP_ICONS, IntPtr.Zero);
         }
 
-        // Garante a persistência mesmo se o explorer não estiver rodando (vale no próximo início).
-        using var key = Registry.CurrentUser.CreateSubKey(ExplorerAdvancedKey);
-        key.SetValue("HideIcons", hidden ? 1 : 0, RegistryValueKind.DWord);
+        // Grava os dois lugares que o Explorer pode ler ao abrir, para valer também sem ele rodando agora
+        // (Modo Console) e não deixar um dos dois contradizendo o outro.
+        using (var key = Registry.CurrentUser.CreateSubKey(ExplorerAdvancedKey))
+        {
+            if (key.GetValue("HideIcons") is not int current || current != (hidden ? 1 : 0))
+            {
+                key.SetValue("HideIcons", hidden ? 1 : 0, RegistryValueKind.DWord);
+            }
+        }
+
+        if (ReadDesktopFlags() is { } flags)
+        {
+            int wanted = hidden ? flags | NativeMethods.FWF_NOICONS : flags & ~NativeMethods.FWF_NOICONS;
+            if (wanted != flags)
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(DesktopBagKey);
+                key.SetValue("FFlags", wanted, RegistryValueKind.DWord);
+            }
+        }
+    }
+
+    /// <summary>Ícones escondidos na tela agora, ou nulo sem o Explorer (sem a área de trabalho dele).</summary>
+    private static bool? LiveIconsHidden(IntPtr defView)
+    {
+        if (defView == IntPtr.Zero) return null;
+        var list = NativeMethods.FindWindowEx(defView, IntPtr.Zero, "SysListView32", null);
+        return list == IntPtr.Zero ? null : !NativeMethods.IsWindowVisible(list);
+    }
+
+    private static int? ReadDesktopFlags()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(DesktopBagKey);
+        return key?.GetValue("FFlags") is int v ? v : null;
     }
 
     private static IntPtr FindDesktopDefView()

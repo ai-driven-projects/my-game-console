@@ -410,8 +410,9 @@ public sealed partial class ConsoleForm : Form
             Image = CardIcon(ConsoleIcon.Desktop),
             Title = "Área de trabalho",
             Aspect = SystemTileAspect,
-            Subtitle = "Fecha esta tela e volta ao Windows.",
-            OnSelect = Hide,
+            Subtitle = "Minimiza todos os apps e mostra só o papel de parede. A barra de tarefas aparece ao levar o " +
+                       "cursor até a parte de baixo da tela.",
+            OnSelect = GoToDesktop,
         });
         system.Tiles.Add(new Tile
         {
@@ -503,6 +504,17 @@ public sealed partial class ConsoleForm : Form
     /// </summary>
     private void ToggleRecordingFromConsole() => _toggleRecording();
 
+    /// <summary>
+    /// Vai para a área de trabalho limpa: minimiza os outros apps e passa o foco para ela antes de esconder esta
+    /// tela (depois de escondida, o Windows já não deixaria este processo escolher quem fica na frente).
+    /// </summary>
+    private void GoToDesktop()
+    {
+        try { ForegroundWindow.ShowDesktop(); }
+        catch { /* no pior caso, só esconde a tela, como antes */ }
+        Hide();
+    }
+
     /// <summary>Contagem antes de gravar, no aviso desta tela (chamado pela bandeja, que controla a contagem).</summary>
     public void ShowRecordingCountdown(int seconds) => ShowNotice($"A gravação da tela começa em {seconds}...");
 
@@ -522,6 +534,7 @@ public sealed partial class ConsoleForm : Form
     {
         var file = Path.GetFileName(_recorder.CurrentFile);
         if (_recorder.LastError is { } error) ShowNotice($"A gravação parou: {error}", isError: true);
+        else if (!_recorder.IsRecording && _recorder.LastWarning is { } warning) ShowNotice($"Gravação salva: {file}. {warning}", isError: true);
         else if (!_recorder.IsRecording) ShowNotice($"Gravação salva: {file}");
         else Invalidate();
     }

@@ -93,6 +93,39 @@ public static class ForegroundWindow
         return NativeMethods.GetForegroundWindow() == hwnd;
     }
 
+    /// <summary>Janelas do próprio shell que nunca são minimizadas: a área de trabalho e as barras de tarefas.</summary>
+    private static readonly HashSet<string> ShellClasses =
+        ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"];
+
+    /// <summary>
+    /// Minimiza as janelas de todos os outros apps (inclusive jogos em tela cheia sem borda) e deixa a área de
+    /// trabalho em primeiro plano, mostrando só o papel de parede. Com a barra de tarefas em auto-ocultar, é o
+    /// foco na área de trabalho que a mantém recolhida: se a janela que sai da frente deixasse o foco para a
+    /// barra, ela ficaria aparecendo. Chamar enquanto este processo está em primeiro plano (a tela do console
+    /// ainda aberta), senão o Windows não deixa mudar o foco.
+    /// </summary>
+    public static void ShowDesktop()
+    {
+        uint self = (uint)Environment.ProcessId;
+        foreach (var window in ListVisible())
+        {
+            if (window.ProcessId == self || ShellClasses.Contains(window.ClassName) || window.Title.Length == 0) continue;
+            if (NativeMethods.IsIconic(window.Handle) || NativeMethods.GetWindow(window.Handle, NativeMethods.GW_OWNER) != IntPtr.Zero) continue;
+
+            // Janelas de apoio (avisos, sobreposições, teclado de toque) e as escondidas pelo compositor ficam como estão.
+            long exStyle = (long)NativeMethods.GetWindowLongPtr(window.Handle, NativeMethods.GWL_EXSTYLE);
+            if ((exStyle & (NativeMethods.WS_EX_TOOLWINDOW | NativeMethods.WS_EX_NOACTIVATE)) != 0) continue;
+            if (NativeMethods.DwmGetWindowAttribute(window.Handle, NativeMethods.DWMWA_CLOAKED, out int cloaked, sizeof(int)) >= 0
+                && cloaked != 0) continue;
+
+            // Assíncrono: um app travado não segura a tela; sem ativar a próxima janela, para o foco ir para a área de trabalho.
+            NativeMethods.ShowWindowAsync(window.Handle, NativeMethods.SW_SHOWMINNOACTIVE);
+        }
+
+        var desktop = NativeMethods.FindWindow("Progman", null);
+        if (desktop != IntPtr.Zero) TryBringToFront(desktop);
+    }
+
     /// <summary>
     /// Autoriza o próximo processo que mostrar uma janela a tomar o primeiro plano (só vale enquanto este
     /// processo estiver em primeiro plano). Útil antes de pedir a outro app, já aberto, que mostre uma janela.
