@@ -19,7 +19,8 @@ esconder a área de trabalho, reagir à conexão de controles, atalhos rápidos 
   papel de parede do console: a imagem `img/wallpaper.webp`, que vai junto com o app e com o instalador, ou
   uma imagem sua (se o Windows não tiver o decodificador WebP, o app gera uma arte própria como reserva),
   e entrada sem senha ao acordar da suspensão (o mesmo que "Nunca" em Contas > Opções de entrada, aplicado
-  em todos os planos de energia; Win+L continua pedindo senha; gravar pede o UAC uma vez). O estado anterior
+  em todos os planos de energia; Win+L continua pedindo senha; gravar pede o UAC uma vez) e sem a tela cheia
+  "Vamos concluir a configuração do seu dispositivo" nem a de boas-vindas após atualizações. O estado anterior
   é guardado e restaurado ao desativar; ao ligar o PC, o app reaplica tudo (ativar o Modo Game também liga
   "Iniciar com o Windows"). O tile "Modo Game" da tela do console abre um checklist: o estado real de cada
   ajuste no Windows (aplicado, pendente, desligado) e os passos que só você pode fazer, como o login
@@ -90,7 +91,7 @@ O que o instalador faz:
   Windows não consegue pedir para fechá-lo).
 - Ao desinstalar, remove a entrada em `HKCU\...\Run` e a tarefa agendada `MyGameConsole` criadas por
   "Iniciar com o Windows". As configurações em `%LocalAppData%\MyGameConsole` são mantidas, e os
-  ajustes do Modo Game (barra, ícones, papel de parede, senha ao acordar) devem ser desativados no app antes de desinstalar.
+  ajustes do Modo Game (barra, ícones, papel de parede, senha ao acordar, tela de configuração) devem ser desativados no app antes de desinstalar.
 - Atualizações: instalar um MSI de versão maior substitui a anterior mantendo inicialização e configurações.
 
 O MSI e o executável não são assinados. Com o **Smart App Control** ligado (Windows 11), o Windows pode

@@ -31,6 +31,7 @@ public sealed class SettingsForm : Form
     private readonly CheckBox _chkGmIcons = new() { Text = "Esconder os ícones da área de trabalho", AutoSize = true };
     private readonly CheckBox _chkGmWallpaper = new() { Text = "Aplicar papel de parede do console", AutoSize = true };
     private readonly CheckBox _chkGmNoWakePassword = new() { Text = "Entrar sem senha ao acordar da suspensão (pede o UAC uma vez; Win+L continua pedindo senha)", AutoSize = true };
+    private readonly CheckBox _chkGmNoSetupPrompts = new() { Text = "Não mostrar a tela \"Vamos concluir a configuração do seu dispositivo\"", AutoSize = true };
     private readonly TextBox _txtWallpaper = new() { Dock = DockStyle.Fill };
 
     private readonly TextBox _txtSteamPath = new() { Dock = DockStyle.Fill };
@@ -132,7 +133,7 @@ public sealed class SettingsForm : Form
         gameTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
         var flowGame = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, AutoSize = true, WrapContents = false };
-        flowGame.Controls.AddRange([_chkGmTaskbar, _chkGmIcons, _chkGmWallpaper, _chkGmNoWakePassword]);
+        flowGame.Controls.AddRange([_chkGmTaskbar, _chkGmIcons, _chkGmWallpaper, _chkGmNoWakePassword, _chkGmNoSetupPrompts]);
         gameTable.Controls.Add(flowGame, 0, 0);
         gameTable.SetColumnSpan(flowGame, 3);
 
@@ -251,6 +252,7 @@ public sealed class SettingsForm : Form
         _chkGmIcons.Checked = s.GameModeHideDesktopIcons;
         _chkGmWallpaper.Checked = s.GameModeApplyWallpaper;
         _chkGmNoWakePassword.Checked = s.GameModeSkipPasswordOnWake;
+        _chkGmNoSetupPrompts.Checked = s.GameModeHideSetupPrompts;
         _txtWallpaper.Text = s.GameModeWallpaperPath ?? string.Empty;
 
         _txtSteamPath.Text = s.SteamPathOverride ?? string.Empty;
@@ -286,6 +288,7 @@ public sealed class SettingsForm : Form
             s.GameModeHideDesktopIcons = _chkGmIcons.Checked;
             s.GameModeApplyWallpaper = _chkGmWallpaper.Checked;
             s.GameModeSkipPasswordOnWake = _chkGmNoWakePassword.Checked;
+            s.GameModeHideSetupPrompts = _chkGmNoSetupPrompts.Checked;
             s.GameModeWallpaperPath = string.IsNullOrWhiteSpace(_txtWallpaper.Text) ? null : _txtWallpaper.Text.Trim();
 
             s.SteamPathOverride = string.IsNullOrWhiteSpace(_txtSteamPath.Text) ? null : _txtSteamPath.Text.Trim();

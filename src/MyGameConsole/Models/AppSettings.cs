@@ -78,6 +78,12 @@ public sealed class AppSettings
     /// </summary>
     public bool GameModeSkipPasswordOnWake { get; set; } = true;
 
+    /// <summary>
+    /// Modo Game: não mostrar a tela cheia "Vamos concluir a configuração do seu dispositivo" nem a de
+    /// boas-vindas após atualizações (ajustes do usuário, sem administrador).
+    /// </summary>
+    public bool GameModeHideSetupPrompts { get; set; } = true;
+
     /// <summary>Papel de parede personalizado do Modo Game. Vazio usa o papel padrão que vem com o app (wallpaper.webp).</summary>
     public string? GameModeWallpaperPath { get; set; }
 
@@ -123,6 +129,11 @@ public sealed class DesktopStateSnapshot
     /// Nulo em backups antigos: é preenchido na primeira reaplicação, antes de mexer no ajuste.
     /// </summary>
     public Dictionary<string, WakePasswordState>? WakePasswordByScheme { get; set; }
+    /// <summary>
+    /// Valores originais das telas de "concluir a configuração" (nulo no valor = não existia).
+    /// Nulo em backups antigos: é preenchido na primeira reaplicação, antes de mexer no ajuste.
+    /// </summary>
+    public Dictionary<string, int?>? SetupPrompts { get; set; }
 }
 
 /// <summary>"Exigir senha ao acordar" de um plano de energia, na tomada e na bateria.</summary>

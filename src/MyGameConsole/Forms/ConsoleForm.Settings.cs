@@ -165,6 +165,9 @@ public sealed partial class ConsoleForm
         Toggle("Entrar sem senha ao acordar",
             "Ao voltar da suspensão ou hibernação, o Windows entra direto, sem pedir senha (em todos os planos de energia). Bloquear com Win+L continua pedindo. Gravar pede confirmação do UAC uma vez.",
             () => _settings.Current.GameModeSkipPasswordOnWake, v => SetSetting(s => s.GameModeSkipPasswordOnWake = v));
+        Toggle("Sem a tela de concluir a configuração",
+            "O Windows deixa de abrir a tela cheia \"Vamos concluir a configuração do seu dispositivo\" e a de boas-vindas após atualizações.",
+            () => _settings.Current.GameModeHideSetupPrompts, v => SetSetting(s => s.GameModeHideSetupPrompts = v));
         _items.Add(new SettingItem
         {
             Title = "Imagem do papel de parede",

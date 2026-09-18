@@ -10,7 +10,8 @@ namespace MyGameConsole.Services;
 
 /// <summary>
 /// Ajustes visuais da área de trabalho usados pelo Modo Game: barra de tarefas em auto-ocultar,
-/// ícones da área de trabalho escondidos e papel de parede. Nenhum deles exige reiniciar o explorer.
+/// ícones da área de trabalho escondidos, papel de parede e telas de "concluir a configuração do Windows".
+/// Nenhum deles exige reiniciar o explorer nem administrador.
 /// </summary>
 public sealed class DesktopTweaksService
 {
@@ -100,6 +101,69 @@ public sealed class DesktopTweaksService
         }
 
         return IntPtr.Zero;
+    }
+
+    // ------------------------------------------------------------------
+    // Telas de "Vamos concluir a configuração do seu dispositivo"
+    // ------------------------------------------------------------------
+
+    private const string CurrentVersionKey = @"Software\Microsoft\Windows\CurrentVersion";
+
+    /// <summary>
+    /// Valores DWORD (em HKCU\...\CurrentVersion) que fazem o Windows abrir, no logon ou após atualizações,
+    /// a tela cheia "Vamos concluir a configuração do seu dispositivo" (SCOOBE) e a de boas-vindas/novidades.
+    /// São as mesmas caixas de Configurações > Sistema > Notificações > Configurações adicionais.
+    /// Formato: subchave relativa a CurrentVersion + "\" + nome do valor.
+    /// </summary>
+    private static readonly string[] SetupPromptValues =
+    [
+        @"UserProfileEngagement\ScoobeSystemSettingEnabled",
+        @"ContentDeliveryManager\SubscribedContent-310093Enabled",
+    ];
+
+    /// <summary>Verdadeiro se todas as telas de configuração/boas-vindas estão desligadas (valor 0).</summary>
+    public bool AreSetupPromptsDisabled => GetSetupPrompts().Values.All(v => v == 0);
+
+    /// <summary>Valor atual de cada ajuste. Nulo = valor ausente (o Windows usa o padrão, que é mostrar a tela).</summary>
+    public Dictionary<string, int?> GetSetupPrompts()
+    {
+        var result = new Dictionary<string, int?>();
+        foreach (var entry in SetupPromptValues)
+        {
+            var (subKey, name) = SplitSetupPrompt(entry);
+            using var key = Registry.CurrentUser.OpenSubKey(subKey);
+            result[entry] = key?.GetValue(name) is int v ? v : null;
+        }
+        return result;
+    }
+
+    public void SetSetupPromptsDisabled()
+    {
+        foreach (var entry in SetupPromptValues)
+        {
+            var (subKey, name) = SplitSetupPrompt(entry);
+            using var key = Registry.CurrentUser.CreateSubKey(subKey);
+            if (key.GetValue(name) is not 0) key.SetValue(name, 0, RegistryValueKind.DWord);
+        }
+    }
+
+    /// <summary>Devolve os valores originais; os que não existiam antes são apagados.</summary>
+    public void RestoreSetupPrompts(Dictionary<string, int?> original)
+    {
+        foreach (var (entry, value) in original)
+        {
+            if (!SetupPromptValues.Contains(entry)) continue;
+            var (subKey, name) = SplitSetupPrompt(entry);
+            using var key = Registry.CurrentUser.CreateSubKey(subKey);
+            if (value is { } v) key.SetValue(name, v, RegistryValueKind.DWord);
+            else key.DeleteValue(name, throwOnMissingValue: false);
+        }
+    }
+
+    private static (string SubKey, string Name) SplitSetupPrompt(string entry)
+    {
+        int i = entry.LastIndexOf('\\');
+        return (CurrentVersionKey + @"\" + entry[..i], entry[(i + 1)..]);
     }
 
     // ------------------------------------------------------------------

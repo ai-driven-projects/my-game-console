@@ -44,6 +44,11 @@ public sealed partial class ConsoleForm
             s.GameModeSkipPasswordOnWake, enabled, real.WakePasswordSkipped, v => SetSetting(x => x.GameModeSkipPasswordOnWake = v),
             pendingHint: "O Windows ainda pede senha ao acordar. Desligue e ligue este ajuste (pede o UAC) ou faça à mão: " +
                          "Configurações > Contas > Opções de entrada > \"Se você esteve ausente...\" > Nunca.");
+        AutoItem("Sem a tela de concluir a configuração",
+            "O Windows deixa de abrir, ao entrar ou após atualizações, a tela cheia \"Vamos concluir a configuração do seu " +
+            "dispositivo\" e a de boas-vindas/novidades (o mesmo que desmarcar essas opções em Sistema > Notificações > " +
+            "Configurações adicionais).",
+            s.GameModeHideSetupPrompts, enabled, real.SetupPromptsHidden, v => SetSetting(x => x.GameModeHideSetupPrompts = v));
         AutoItem("Iniciar com o Windows",
             "Ligado junto com o Modo Game: sem o app no boot, os ajustes não seriam reaplicados e a tela do console não abriria pelo controle.",
             s.StartWithWindows, enabled, s.StartWithWindows, v => SetSetting(x => x.StartWithWindows = v));

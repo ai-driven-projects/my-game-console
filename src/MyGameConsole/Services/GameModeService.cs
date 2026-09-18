@@ -7,11 +7,13 @@ public sealed record GameModeStatus(
     bool? TaskbarHidden,
     bool? DesktopIconsHidden,
     bool? WallpaperApplied,
-    bool? WakePasswordSkipped);
+    bool? WakePasswordSkipped,
+    bool? SetupPromptsHidden);
 
 /// <summary>
 /// "Modo Game": conjunto de ajustes de área de trabalho que ficam aplicados de forma persistente
-/// (barra auto-ocultar, ícones escondidos, papel de parede do console, sem senha ao acordar). O estado original é
+/// (barra auto-ocultar, ícones escondidos, papel de parede do console, sem senha ao acordar, sem a tela de
+/// "concluir a configuração" do Windows). O estado original é
 /// guardado ao ativar e restaurado ao desativar; ao iniciar o app, os ajustes são reaplicados.
 /// </summary>
 public sealed class GameModeService
@@ -102,7 +104,8 @@ public sealed class GameModeService
         TaskbarHidden: SafeRead(() => _tweaks.IsTaskbarAutoHide),
         DesktopIconsHidden: SafeRead(() => _tweaks.AreDesktopIconsHidden),
         WallpaperApplied: SafeRead(IsWallpaperApplied),
-        WakePasswordSkipped: SafeRead(() => !_power.IsWakePasswordRequiredAnywhere()));
+        WakePasswordSkipped: SafeRead(() => !_power.IsWakePasswordRequiredAnywhere()),
+        SetupPromptsHidden: SafeRead(() => _tweaks.AreSetupPromptsDisabled));
 
     private static bool? SafeRead(Func<bool> read)
     {
@@ -145,6 +148,7 @@ public sealed class GameModeService
             TaskbarAutoHide = _tweaks.IsTaskbarAutoHide,
             DesktopIconsHidden = _tweaks.AreDesktopIconsHidden,
             WakePasswordByScheme = TryReadWakePassword(),
+            SetupPrompts = _tweaks.GetSetupPrompts(),
         };
     }
 
@@ -202,6 +206,19 @@ public sealed class GameModeService
             else if (backup?.WakePasswordByScheme is { } states) _power.RestoreWakePassword(states, allowElevation: interactive);
         });
 
+        Try(errors, "tela de concluir a configuração", () =>
+        {
+            // Backups de versões antigas não têm o valor original: guarda agora, antes de mexer.
+            if (backup is not null && backup.SetupPrompts is null)
+            {
+                var original = _tweaks.GetSetupPrompts();
+                _settings.Update(_ => backup.SetupPrompts = original);
+            }
+
+            if (s.GameModeHideSetupPrompts) _tweaks.SetSetupPromptsDisabled();
+            else if (backup?.SetupPrompts is { } values) _tweaks.RestoreSetupPrompts(values);
+        });
+
         if (errors.Count > 0)
         {
             throw new InvalidOperationException("Modo Game aplicado com problemas: " + string.Join("; ", errors));
@@ -218,6 +235,10 @@ public sealed class GameModeService
         Try(errors, "senha ao acordar", () =>
         {
             if (backup.WakePasswordByScheme is { } states) _power.RestoreWakePassword(states, allowElevation: true);
+        });
+        Try(errors, "tela de concluir a configuração", () =>
+        {
+            if (backup.SetupPrompts is { } values) _tweaks.RestoreSetupPrompts(values);
         });
 
         if (errors.Count > 0)
