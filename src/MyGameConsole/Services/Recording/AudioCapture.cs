@@ -72,6 +72,17 @@ internal sealed unsafe class AudioCapture : IDisposable
 
     public bool IsMicrophone => _microphone;
 
+    /// <summary>
+    /// Joga fora o som já recebido e zera as contagens (dispositivo, formato e erros ficam): a captura foi aberta
+    /// antes de a gravação começar, só para o dispositivo estar pronto.
+    /// </summary>
+    public void DiscardPending()
+    {
+        while (Chunks.TryDequeue(out _)) { }
+        Stats.Packets = Stats.SilentPackets = Stats.TimestampErrors = 0;
+        Stats.Peak = 0;
+    }
+
     /// <param name="microphone">Falso: o som do PC (loopback da saída padrão). Verdadeiro: o microfone padrão.</param>
     public AudioCapture(bool microphone)
     {

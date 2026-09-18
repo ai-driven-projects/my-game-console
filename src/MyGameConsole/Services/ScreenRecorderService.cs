@@ -74,6 +74,46 @@ public sealed class ScreenRecorderService : IDisposable
         else Start();
     }
 
+    // Capturas de som abertas antes de gravar (ver PrepareAudio), com as opções com que foram abertas.
+    private List<AudioCapture>? _preparedAudio;
+    private (bool SystemAudio, bool Microphone) _preparedFor;
+
+    /// <summary>
+    /// Abre as capturas de som já na contagem "3, 2, 1": o microfone do notebook entrega só zeros por cerca de
+    /// 1 s depois de aberto, e abrindo junto com a gravação o começo da narração se perdia. <see cref="Start"/>
+    /// usa as capturas já abertas; <see cref="CancelPreparedAudio"/> as fecha se a contagem for cancelada.
+    /// </summary>
+    public void PrepareAudio()
+    {
+        lock (_gate)
+        {
+            if (_thread is not null || _preparedAudio is not null) return;
+            var s = _settings.Current;
+            _preparedFor = (s.RecordingCaptureAudio, s.RecordingCaptureMicrophone);
+            _preparedAudio = CreateAudio(_preparedFor.SystemAudio, _preparedFor.Microphone);
+        }
+    }
+
+    public void CancelPreparedAudio()
+    {
+        List<AudioCapture>? prepared;
+        lock (_gate)
+        {
+            prepared = _preparedAudio;
+            _preparedAudio = null;
+        }
+
+        if (prepared is not null) foreach (var capture in prepared) capture.Dispose();
+    }
+
+    private static List<AudioCapture> CreateAudio(bool systemAudio, bool microphone)
+    {
+        var audio = new List<AudioCapture>();
+        if (systemAudio) audio.Add(new AudioCapture(microphone: false));
+        if (microphone) audio.Add(new AudioCapture(microphone: true));
+        return audio;
+    }
+
     /// <summary>
     /// Começa a gravar. Volta só depois que a captura e o arquivo estão prontos, e lança a exceção com o motivo
     /// se não der para gravar (o chamador mostra o aviso).
@@ -92,6 +132,16 @@ public sealed class ScreenRecorderService : IDisposable
                 _settings.Current.RecordingCaptureAudio,
                 _settings.Current.RecordingCaptureMicrophone,
                 NativeMethods.GetForegroundWindow());
+
+            // As capturas abertas na contagem valem se as opções de som não mudaram nesse meio-tempo.
+            var prepared = _preparedAudio;
+            _preparedAudio = null;
+            if (prepared is not null && _preparedFor != (options.SystemAudio, options.Microphone))
+            {
+                foreach (var capture in prepared) capture.Dispose();
+                prepared = null;
+            }
+            options = options with { PreparedAudio = prepared };
 
             Exception? startError = null;
             using var ready = new ManualResetEventSlim();
@@ -139,6 +189,9 @@ public sealed class ScreenRecorderService : IDisposable
     private sealed record Options(string Path, int Fps, bool SystemAudio, bool Microphone, IntPtr Window)
     {
         public bool Audio => SystemAudio || Microphone;
+
+        /// <summary>Capturas de som já abertas na contagem (<see cref="PrepareAudio"/>), ou nulo para abrir agora.</summary>
+        public List<AudioCapture>? PreparedAudio { get; init; }
     }
 
     private void Record(Options options, ManualResetEventSlim ready, Action<Exception> startFailed)
@@ -146,7 +199,7 @@ public sealed class ScreenRecorderService : IDisposable
         int coHr = CoInitializeEx(IntPtr.Zero, COINIT_MULTITHREADED);
         bool mfStarted = false;
         DesktopDuplication? screen = null;
-        var audio = new List<AudioCapture>();
+        var audio = options.PreparedAudio ?? [];
         Mp4Writer? writer = null;
         bool started = false;
 
@@ -156,9 +209,11 @@ public sealed class ScreenRecorderService : IDisposable
             mfStarted = true;
 
             screen = new DesktopDuplication(options.Window);
-            if (options.SystemAudio) audio.Add(new AudioCapture(microphone: false));
-            if (options.Microphone) audio.Add(new AudioCapture(microphone: true));
+            if (options.PreparedAudio is null) audio.AddRange(CreateAudio(options.SystemAudio, options.Microphone));
             writer = CreateWriter(options, screen, onGpu: screen.VideoSupport);
+
+            // O som da contagem não entra no vídeo (nem no registro): a gravação começa agora.
+            foreach (var capture in audio) capture.DiscardPending();
 
             var session = new Session(options.Fps, audio, Stopwatch.GetTimestamp());
             Interlocked.Exchange(ref _startedAt, session.StartTimestamp);
@@ -450,5 +505,9 @@ public sealed class ScreenRecorderService : IDisposable
         else _ui.Post(_ => StateChanged?.Invoke(this, EventArgs.Empty), null);
     }
 
-    public void Dispose() => Stop();
+    public void Dispose()
+    {
+        CancelPreparedAudio();
+        Stop();
+    }
 }

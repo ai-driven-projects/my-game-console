@@ -582,6 +582,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         if (_countdown is not null)
         {
             StopCountdown();
+            Safe(_recorder.CancelPreparedAudio);
             ShowRecordingMessage("Gravação cancelada", Theme.PillOff);
             return;
         }
@@ -593,6 +594,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         _countdownLeft = RecordingCountdownSeconds;
+        Safe(_recorder.PrepareAudio); // o microfone leva ~1 s para entregar som depois de aberto
         ShowCountdown();
         _countdown = new System.Windows.Forms.Timer { Interval = 1000 };
         _countdown.Tick += (_, _) =>
