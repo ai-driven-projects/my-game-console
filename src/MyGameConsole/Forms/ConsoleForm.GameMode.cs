@@ -23,7 +23,8 @@ public sealed partial class ConsoleForm
 
         Header("Estado");
         Toggle("Modo Game",
-            "Aplica os ajustes da lista \"Feito pelo app\" e mantém após reiniciar o PC. Desligar restaura tudo como estava. " +
+            "Aplica os ajustes da lista \"Feito pelo app\" e mantém após reiniciar o PC. Desligar volta a área de trabalho ao normal " +
+            "(barra de tarefas sempre visível e ícones na tela) e devolve o resto como estava. " +
             "Cada ajuste pode ser ligado ou desligado individualmente na lista.",
             () => _gameMode.IsEnabled, v => { if (v != _gameMode.IsEnabled) ToggleGameMode(); });
 

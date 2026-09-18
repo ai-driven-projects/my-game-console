@@ -23,10 +23,20 @@ public sealed class DesktopTweaksService
     // Barra de tarefas
     // ------------------------------------------------------------------
 
+    /// <summary>
+    /// Onde o Explorer lê, ao abrir, se a barra fica em auto-ocultar: bit 0 do byte 8 do valor binário "Settings".
+    /// </summary>
+    private const string StuckRectsKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3";
+    private const int StuckRectsFlagsIndex = 8;
+    private const byte StuckRectsAutoHide = 0x01;
+
+    /// <summary>Com o Explorer aberto, o estado da barra agora; sem ele (Modo Console), o que ele vai ler ao abrir.</summary>
     public bool IsTaskbarAutoHide
     {
         get
         {
+            if (!IsTaskbarRunning) return ReadStuckRectsAutoHide() ?? false;
+
             var data = NewAppBarData();
             var state = (uint)NativeMethods.SHAppBarMessage(NativeMethods.ABM_GETSTATE, ref data);
             return (state & NativeMethods.ABS_AUTOHIDE) != 0;
@@ -35,17 +45,53 @@ public sealed class DesktopTweaksService
 
     public void SetTaskbarAutoHide(bool enabled)
     {
-        var data = NewAppBarData();
-        var state = (uint)NativeMethods.SHAppBarMessage(NativeMethods.ABM_GETSTATE, ref data);
-        var newState = enabled
-            ? state | NativeMethods.ABS_AUTOHIDE
-            : state & ~NativeMethods.ABS_AUTOHIDE;
+        if (IsTaskbarRunning)
+        {
+            var data = NewAppBarData();
+            var state = (uint)NativeMethods.SHAppBarMessage(NativeMethods.ABM_GETSTATE, ref data);
+            var newState = enabled
+                ? state | NativeMethods.ABS_AUTOHIDE
+                : state & ~NativeMethods.ABS_AUTOHIDE;
 
-        if (newState == state) return;
+            if (newState != state)
+            {
+                data = NewAppBarData();
+                data.lParam = (IntPtr)newState;
+                NativeMethods.SHAppBarMessage(NativeMethods.ABM_SETSTATE, ref data);
 
-        data = NewAppBarData();
-        data.lParam = (IntPtr)newState;
-        NativeMethods.SHAppBarMessage(NativeMethods.ABM_SETSTATE, ref data);
+                if (IsTaskbarAutoHide != enabled)
+                {
+                    throw new InvalidOperationException("O Windows não trocou o modo da barra de tarefas.");
+                }
+            }
+        }
+
+        // O ABM_SETSTATE troca a barra na hora, mas o Explorer não grava o StuckRects3: ao reabrir (reiniciar o PC,
+        // Modo Console, travamento) ele lia o valor antigo e a barra voltava a se esconder com o Modo Game desligado.
+        WriteStuckRectsAutoHide(enabled);
+    }
+
+    private static bool IsTaskbarRunning => NativeMethods.FindWindow("Shell_TrayWnd", null) != IntPtr.Zero;
+
+    private static bool? ReadStuckRectsAutoHide()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(StuckRectsKey);
+        return key?.GetValue("Settings") is byte[] bytes && bytes.Length > StuckRectsFlagsIndex
+            ? (bytes[StuckRectsFlagsIndex] & StuckRectsAutoHide) != 0
+            : null;
+    }
+
+    private static void WriteStuckRectsAutoHide(bool enabled)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(StuckRectsKey, writable: true);
+        if (key?.GetValue("Settings") is not byte[] bytes || bytes.Length <= StuckRectsFlagsIndex) return;
+
+        byte flags = bytes[StuckRectsFlagsIndex];
+        byte wanted = enabled ? (byte)(flags | StuckRectsAutoHide) : (byte)(flags & ~StuckRectsAutoHide);
+        if (wanted == flags) return;
+
+        bytes[StuckRectsFlagsIndex] = wanted;
+        key.SetValue("Settings", bytes, RegistryValueKind.Binary);
     }
 
     private static NativeMethods.AppBarData NewAppBarData() => new()
@@ -85,6 +131,11 @@ public sealed class DesktopTweaksService
         {
             NativeMethods.SendMessage(defView, NativeMethods.WM_COMMAND,
                 (IntPtr)NativeMethods.CMD_TOGGLE_DESKTOP_ICONS, IntPtr.Zero);
+
+            if (LiveIconsHidden(defView) != hidden)
+            {
+                throw new InvalidOperationException("O Explorer não trocou a exibição dos ícones da área de trabalho.");
+            }
         }
 
         // Grava os dois lugares que o Explorer pode ler ao abrir, para valer também sem ele rodando agora

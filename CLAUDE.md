@@ -24,6 +24,10 @@ Se `dotnet` não estiver no PATH da sessão, use `C:\Program Files\dotnet\dotnet
   ao ativar, reaplica no início do app e só restaura ao desativar. Novos ajustes de desktop entram em
   `DesktopTweaksService` e são ligados/desligados em `GameModeService.Apply`/`Restore`. Todo ajuste novo
   também entra no checklist da tela do console (`Forms/ConsoleForm.GameMode.cs`, via `GameModeService.Inspect`).
+- Desligar o Modo Game (ou o ajuste da barra/ícones) deixa sempre a barra visível e os ícones na tela, sem olhar o
+  backup: um instantâneo tirado com os dois já escondidos os mantinha escondidos para sempre. A barra usa
+  `ABM_SETSTATE`, que o Explorer não grava: `SetTaskbarAutoHide` grava também o bit 0 do byte 8 de
+  `StuckRects3\Settings`, senão a barra volta a se esconder quando o Explorer reabre (reboot, Modo Console).
 - Ícones da área de trabalho (`DesktopTweaksService.SetDesktopIconsHidden`): o comando do Explorer só alterna e
   grava em `Shell\Bags\1\Desktop\FFlags` (bit `FWF_NOICONS`), nunca em `Advanced\HideIcons`. Decida sempre pelo
   estado na tela (a `SysListView32` visível ou não), nunca pelo registro, e grave os dois valores.

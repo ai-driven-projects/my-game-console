@@ -72,10 +72,7 @@ public sealed class GameModeService
 
         try
         {
-            if (backup is not null)
-            {
-                Restore(backup);
-            }
+            Restore(backup);
         }
         finally
         {
@@ -182,16 +179,17 @@ public sealed class GameModeService
         var backup = s.GameModeBackup;
         var errors = new List<string>();
 
+        // Desligados, barra e ícones voltam ao normal da área de trabalho (ver Restore).
         Try(errors, "barra de tarefas", () =>
         {
             if (s.GameModeHideTaskbar) _tweaks.SetTaskbarAutoHide(true);
-            else if (backup is not null) _tweaks.SetTaskbarAutoHide(backup.TaskbarAutoHide);
+            else if (backup is not null) _tweaks.SetTaskbarAutoHide(false);
         });
 
         Try(errors, "ícones da área de trabalho", () =>
         {
             if (s.GameModeHideDesktopIcons) _tweaks.SetDesktopIconsHidden(true);
-            else if (backup is not null) _tweaks.SetDesktopIconsHidden(backup.DesktopIconsHidden);
+            else if (backup is not null) _tweaks.SetDesktopIconsHidden(false);
         });
 
         Try(errors, "papel de parede", () =>
@@ -302,12 +300,29 @@ public sealed class GameModeService
         return _tweaks.EnsureFallbackWallpaper(_settings.Directory);
     }
 
-    private void Restore(DesktopStateSnapshot backup)
+    /// <summary>
+    /// Desliga o Modo Game. Barra de tarefas e ícones voltam sempre ao normal da área de trabalho (barra sempre
+    /// visível, atalhos na tela), mesmo sem backup: o instantâneo tirado ao ativar pode ter pego os dois já
+    /// escondidos (por uma desativação anterior que falhou), e restaurá-lo deixava tudo escondido para sempre.
+    /// O resto volta ao valor original guardado.
+    /// </summary>
+    private void Restore(DesktopStateSnapshot? backup)
     {
         var errors = new List<string>();
 
-        Try(errors, "barra de tarefas", () => _tweaks.SetTaskbarAutoHide(backup.TaskbarAutoHide));
-        Try(errors, "ícones da área de trabalho", () => _tweaks.SetDesktopIconsHidden(backup.DesktopIconsHidden));
+        Try(errors, "barra de tarefas", () => _tweaks.SetTaskbarAutoHide(false));
+        Try(errors, "ícones da área de trabalho", () => _tweaks.SetDesktopIconsHidden(false));
+
+        if (backup is not null) RestoreFromBackup(backup, errors);
+
+        if (errors.Count > 0)
+        {
+            throw new InvalidOperationException("Modo Game desativado com problemas: " + string.Join("; ", errors));
+        }
+    }
+
+    private void RestoreFromBackup(DesktopStateSnapshot backup, List<string> errors)
+    {
         Try(errors, "papel de parede", () => RestoreWallpaper(backup));
         Try(errors, "senha ao acordar", () =>
         {
@@ -325,11 +340,6 @@ public sealed class GameModeService
         {
             if (backup.LockScreen is { } values) _lockScreen.Restore(values, allowElevation: true);
         });
-
-        if (errors.Count > 0)
-        {
-            throw new InvalidOperationException("Modo Game desativado com problemas: " + string.Join("; ", errors));
-        }
     }
 
     /// <summary>Devolve o papel de parede original, inclusive o tipo (imagem, cor sólida, apresentação).</summary>
