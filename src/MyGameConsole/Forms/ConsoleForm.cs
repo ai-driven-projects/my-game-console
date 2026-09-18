@@ -49,8 +49,8 @@ public sealed partial class ConsoleForm : Form
 
     private const float GameCapsuleAspect = 2f / 3f;
     // Os jogos são o destaque da tela; "Sistema" fica em cartões mais baixos e largos (cabem os nomes).
-    private const float GamesRowScale = 1.58f;
-    private const float SystemRowScale = 0.74f;
+    private const float GamesRowScale = 1.8f;
+    private const float SystemRowScale = 0.86f;
     private const float SystemTileAspect = 1.3f;
 
     private const short StickDeadZone = 16000;
@@ -967,12 +967,10 @@ public sealed partial class ConsoleForm : Form
             using var progressPen = new Pen(Theme.Accent, u * 0.35f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
             using var trackPen = new Pen(Color.FromArgb(60, Theme.Accent), u * 0.35f);
 
-            using var glyphFont = new Font(Theme.IconFontName, d * 0.36f, GraphicsUnit.Pixel);
             using var fill = new SolidBrush(Color.FromArgb(170, Theme.Tile));
             using var darkBrush = new SolidBrush(Theme.BgTop);
             using var glowBrush = new SolidBrush(Color.FromArgb(70, Theme.Accent));
             using var ringPen = new Pen(Color.FromArgb(60, Theme.Muted), u * 0.12f);
-            var center = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
 
             // divisória entre o relógio e os botões
             using (var sepPen = new Pen(Color.FromArgb(70, Theme.Muted), u * 0.12f))
@@ -1003,8 +1001,9 @@ public sealed partial class ConsoleForm : Form
                     g.DrawEllipse(ringPen, rect);
                 }
 
-                // Os glifos da fonte de ícones já vêm centrados na caixa do caractere.
-                g.DrawString(t.Glyph, glyphFont, selected ? darkBrush : mutedBrush, rect, center);
+                // Centrado pela tinta: cada glifo da fonte de ícones fica numa posição diferente dentro da
+                // própria caixa (o X, por exemplo, sai deslocado se centrado pela caixa).
+                DrawInkCenteredIn(g, t.Glyph, Theme.IconFontName, d * 0.36f, selected ? darkBrush : mutedBrush, rect);
 
                 // download em andamento: anel de progresso em volta do botão
                 if (t.Progress?.Invoke() is { } progress)
@@ -1031,22 +1030,9 @@ public sealed partial class ConsoleForm : Form
         var now = DateTime.Now;
         DrawInkCentered(g, now.ToString("HH:mm"), "Segoe UI Light", FontStyle.Regular, u * 4.4f, textBrush, clockRight, cy, alignRight: true);
 
-        // linha de baixo: nome do botão de energia selecionado, ou o status
+        // linha de baixo: status (o nome do botão selecionado vai para o rodapé, como qualquer item)
         using var statusFont = new Font("Segoe UI", u * 1.8f, GraphicsUnit.Pixel);
         float statusY = barTop + barH + u * 1.3f;
-
-        if (showPower && _rows[_row] == topBar && CurrentTile is { } powerTile)
-        {
-            using var boldFont = new Font(statusFont, FontStyle.Bold);
-            var sub = powerTile.LiveSubtitle?.Invoke() ?? powerTile.Subtitle;
-            var subSize = g.MeasureString(sub, statusFont);
-            var titleText = powerTile.Title + "   ·   ";
-            var titleSize = g.MeasureString(titleText, boldFont);
-            float right = w - mx;
-            g.DrawString(sub, statusFont, mutedBrush, right - subSize.Width, statusY);
-            g.DrawString(titleText, boldFont, accentBrush, right - subSize.Width - titleSize.Width, statusY);
-            return;
-        }
 
         var pads = _controllers.ConnectedCount switch
         {
@@ -1092,6 +1078,27 @@ public sealed partial class ConsoleForm : Form
         return left + ink.Width;
     }
 
+    /// <summary>Desenha o texto (ex.: um glifo) com o centro da tinta no centro de <paramref name="rect"/>, nos dois eixos.</summary>
+    private static void DrawInkCenteredIn(Graphics g, string text, string family, float emPixels, Brush brush, RectangleF rect)
+    {
+        using var path = new GraphicsPath();
+        using (var ff = new FontFamily(family))
+        {
+            path.AddString(text, ff, (int)FontStyle.Regular, emPixels, PointF.Empty, StringFormat.GenericTypographic);
+        }
+
+        var ink = path.GetBounds();
+        if (ink.IsEmpty) return;
+
+        using (var m = new Matrix())
+        {
+            m.Translate(rect.X + rect.Width / 2f - (ink.X + ink.Width / 2f), rect.Y + rect.Height / 2f - (ink.Y + ink.Height / 2f));
+            path.Transform(m);
+        }
+
+        g.FillPath(brush, path);
+    }
+
     private void DrawRows(Graphics g, int w, int h)
     {
         float u = h / 100f;
@@ -1102,7 +1109,6 @@ public sealed partial class ConsoleForm : Form
         float y = h * 0.225f;
 
         using var rowTitleFont = new Font("Segoe UI", u * 1.9f, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var subFont = new Font("Segoe UI", u * 1.7f, GraphicsUnit.Pixel);
         using var insideFont = new Font("Segoe UI", u * 1.7f, FontStyle.Bold, GraphicsUnit.Pixel);
         using var pillFont = new Font("Segoe UI", u * 1.25f, FontStyle.Bold, GraphicsUnit.Pixel);
         using var arrowFont = new Font("Segoe UI", u * 3f, GraphicsUnit.Pixel);
@@ -1147,7 +1153,6 @@ public sealed partial class ConsoleForm : Form
             int alpha = activeRow ? 255 : 120;
             using var rowBrush = new SolidBrush(activeRow ? Theme.Text : Theme.Muted);
             using var textBrush = new SolidBrush(Color.FromArgb(alpha, Theme.Text));
-            using var subBrush = new SolidBrush(Color.FromArgb(alpha, Theme.Muted));
             using var tileBrush = new SolidBrush(Color.FromArgb(alpha, Theme.Tile));
             using var tileSelBrush = new SolidBrush(Color.FromArgb(alpha, Theme.TileSelected));
             using var glowBrush = new SolidBrush(Color.FromArgb(60, Theme.Accent));
@@ -1221,20 +1226,14 @@ public sealed partial class ConsoleForm : Form
                     g.DrawString(pillText, pillFont, textBrush, pill, center);
                 }
 
-                // Capas já trazem o nome: o título embaixo só aparece no selecionado. Tiles quadrados sempre têm.
+                // Capas já trazem o nome: o título embaixo só aparece no selecionado. Os cartões sempre têm.
+                // A descrição do selecionado fica no rodapé (DrawFooter), não aqui.
                 if (!capsule || selected)
                 {
                     float labelW = capsule ? Math.Max(rect.Width + gap * 0.8f, baseTile * 2.6f) : rect.Width + gap * 0.8f;
                     var labelRect = new RectangleF(rect.X + rect.Width / 2f - labelW / 2f, rect.Bottom + u * 1.2f, labelW, u * 3.2f);
                     KeepInside(ref labelRect, w, mx);
                     g.DrawString(t.Title, selected ? titleSelFont : titleFont, textBrush, labelRect, oneLine);
-
-                    if (selected && !string.IsNullOrEmpty(t.Subtitle))
-                    {
-                        var subRect = new RectangleF(rect.X + rect.Width / 2f - baseTile * 1.4f, labelRect.Bottom + u * 0.3f, baseTile * 2.8f, u * 4.5f);
-                        KeepInside(ref subRect, w, mx);
-                        g.DrawString(t.Subtitle, subFont, subBrush, subRect, topCenter);
-                    }
                 }
             }
 
@@ -1248,7 +1247,7 @@ public sealed partial class ConsoleForm : Form
                 g.DrawString("›", arrowFont, rowBrush, new RectangleF(w - mx * 0.85f, y, mx * 0.5f, th), center);
             }
 
-            y += th + u * 14.5f;
+            y += th + u * 11.5f; // nome embaixo do tile e título da fileira seguinte
         }
     }
 
@@ -1284,26 +1283,41 @@ public sealed partial class ConsoleForm : Form
         if (rect.Right > w - mx * 0.5f) rect.X = w - mx * 0.5f - rect.Width;
     }
 
+    /// <summary>
+    /// Rodapé da tela inicial, como a faixa de baixo do Big Picture: uma linha fina e o rótulo do item
+    /// selecionado (nome e o que ele faz), seja um jogo, um cartão do Sistema ou um botão da barra do alto.
+    /// </summary>
     private void DrawFooter(Graphics g, int w, int h)
     {
         float u = h / 100f;
         float mx = w * 0.06f;
-        float y = h - u * 7f;
+        float lineY = h - u * 8.5f;
+        float cy = h - u * 4.6f;
 
+        using (var linePen = new Pen(Color.FromArgb(45, Theme.Muted), u * 0.1f))
+        {
+            g.DrawLine(linePen, mx, lineY, w - mx, lineY);
+        }
+
+        if (CurrentTile is not { } tile || (_notice is not null && DateTime.Now < _noticeUntil)) return;
+
+        using var titleFont = new Font("Segoe UI", u * 2.0f, FontStyle.Bold, GraphicsUnit.Pixel);
         using var font = new Font("Segoe UI", u * 1.9f, GraphicsUnit.Pixel);
+        using var textBrush = new SolidBrush(Theme.Text);
         using var mutedBrush = new SolidBrush(Theme.Muted);
+        var leftMid = new StringFormat { LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
 
-        float x = mx;
-        x = DrawHint(g, font, x, y, "A", "Selecionar", u);
-        x = DrawHint(g, font, x, y, "B", "Voltar", u);
-        DrawHint(g, font, x, y, "+", "Navegar", u);
+        // até a versão, no canto direito
+        float right = w - mx - u * 14f;
+        var titleSize = g.MeasureString(tile.Title, titleFont, PointF.Empty, leftMid);
+        float titleW = Math.Min(titleSize.Width, (right - mx) * 0.5f);
+        g.DrawString(tile.Title, titleFont, textBrush, new RectangleF(mx, cy - u * 2f, titleW, u * 4f), leftMid);
 
-        var hotkey = _settings.Current.LauncherHotkey;
-        var right = string.IsNullOrWhiteSpace(hotkey)
-            ? "Esc  Fechar"
-            : $"Esc  Fechar   ·   Atalho: {hotkey}";
-        var size = g.MeasureString(right, font);
-        g.DrawString(right, font, mutedBrush, w - mx - size.Width, y + (u * 3.4f - size.Height) / 2f);
+        var description = tile.LiveSubtitle?.Invoke() ?? tile.Subtitle;
+        if (string.IsNullOrWhiteSpace(description)) return;
+
+        float x = mx + titleW + u * 1.2f;
+        g.DrawString("·   " + description, font, mutedBrush, new RectangleF(x, cy - u * 2f, Math.Max(0, right - x), u * 4f), leftMid);
     }
 
     /// <summary>Versão do app, discreta, no canto inferior direito (abaixo do rodapé). Avisa quando há versão nova.</summary>
@@ -1474,7 +1488,9 @@ public sealed partial class ConsoleForm : Form
         var size = g.MeasureString(_notice, font);
         float pw = Math.Min(size.Width + u * 5f, w * 0.8f);
         float ph = u * 5.5f;
-        var rect = new RectangleF((w - pw) / 2f, h - u * 15f, pw, ph);
+        // Na tela inicial o aviso ocupa a faixa do rodapé (no lugar do rótulo); nas páginas, fica acima dele.
+        float top = _settingsOpen ? h - u * 15f : h - u * 4.6f - ph / 2f;
+        var rect = new RectangleF((w - pw) / 2f, top, pw, ph);
 
         using var brush = new SolidBrush(Color.FromArgb(230, _noticeIsError ? Theme.Danger : Theme.TileSelected));
         using var textBrush = new SolidBrush(Theme.Text);
