@@ -27,6 +27,12 @@ public sealed partial class ConsoleForm : Form
         public SteamGame? Game { get; init; }
         /// <summary>Largura / altura do tile (1 = quadrado; capas de jogo são 2:3).</summary>
         public float Aspect { get; init; } = 1f;
+        /// <summary>Texto que muda com o estado (ex.: progresso da atualização); substitui o <see cref="Subtitle"/>.</summary>
+        public Func<string>? LiveSubtitle { get; init; }
+        /// <summary>Marca de "tem novidade" no botão da barra do alto.</summary>
+        public Func<bool>? Badge { get; init; }
+        /// <summary>Progresso de 0 a 1 desenhado em volta do botão da barra do alto, ou null sem tarefa em andamento.</summary>
+        public Func<double?>? Progress { get; init; }
         public RectangleF Bounds { get; set; }
     }
 
@@ -42,7 +48,10 @@ public sealed partial class ConsoleForm : Form
     }
 
     private const float GameCapsuleAspect = 2f / 3f;
-    private const float GamesRowScale = 1.3f;
+    // Os jogos são o destaque da tela; "Sistema" fica em cartões mais baixos e largos (cabem os nomes).
+    private const float GamesRowScale = 1.58f;
+    private const float SystemRowScale = 0.74f;
+    private const float SystemTileAspect = 1.3f;
 
     private const short StickDeadZone = 16000;
     private static readonly TimeSpan RepeatDelay = TimeSpan.FromMilliseconds(420);
@@ -137,8 +146,8 @@ public sealed partial class ConsoleForm : Form
 
         _inputTimer.Tick += (_, _) => PollController();
         _clockTimer.Tick += (_, _) => Invalidate();
-        // Progresso do download e mudanças de estado da atualização aparecem na página de configurações.
-        _updates.StateChanged += (_, _) => { if (_settingsOpen && Visible) Invalidate(); };
+        // Progresso do download e mudanças de estado da atualização aparecem no botão da barra do alto.
+        _updates.StateChanged += (_, _) => { if (Visible) Invalidate(); };
     }
 
     // ------------------------------------------------------------------
@@ -223,6 +232,16 @@ public sealed partial class ConsoleForm : Form
         var power = new Row { Title = "Energia", IsTopBar = true };
         power.Tiles.Add(new Tile
         {
+            Glyph = Theme.GlyphDownload,
+            Title = "Atualizações",
+            Subtitle = "Verifica se há uma versão nova no GitHub.",
+            LiveSubtitle = UpdateButtonText,
+            Badge = () => _updates.Available is not null && !_updates.IsBusy,
+            Progress = () => _updates.State == UpdateState.Downloading ? _updates.Progress : null,
+            OnSelect = () => _ = RunUpdateFlowAsync(),
+        });
+        power.Tiles.Add(new Tile
+        {
             Glyph = Theme.GlyphMoon,
             Title = "Suspender",
             Subtitle = "Suspende o PC, ou só apaga a tela e a luz do teclado (o controle acorda).",
@@ -291,11 +310,12 @@ public sealed partial class ConsoleForm : Form
             });
         }
 
-        var system = new Row { Title = "Sistema" };
+        var system = new Row { Title = "Sistema", Scale = SystemRowScale };
         system.Tiles.Add(new Tile
         {
             Glyph = Theme.GlyphGame,
             Title = "Modo Game",
+            Aspect = SystemTileAspect,
             Subtitle = "Checklist do que o app aplica (barra, ícones, papel de parede, senha ao acordar) e do que falta fazer à mão.",
             IsOn = () => _gameMode.IsEnabled,
             OnSelect = OpenGameModePage,
@@ -304,6 +324,7 @@ public sealed partial class ConsoleForm : Form
         {
             Glyph = Theme.GlyphController,
             Title = "Controle",
+            Aspect = SystemTileAspect,
             Subtitle = "Mapa dos atalhos do controle, mouse pelo analógico e teclado virtual, com o desenho do controle.",
             IsOn = () => _mouse.IsEnabled,
             OnSelect = OpenControllerPage,
@@ -312,6 +333,7 @@ public sealed partial class ConsoleForm : Form
         {
             Glyph = Theme.GlyphHome,
             Title = "Área de trabalho",
+            Aspect = SystemTileAspect,
             Subtitle = "Fecha esta tela e volta ao Windows.",
             OnSelect = Hide,
         });
@@ -319,6 +341,7 @@ public sealed partial class ConsoleForm : Form
         {
             Glyph = Theme.GlyphSettings,
             Title = "Configurações",
+            Aspect = SystemTileAspect,
             Subtitle = "Opções do app, Modo Game, controle e atalhos, tudo pelo controle.",
             OnSelect = OpenSettingsPage,
         });
@@ -908,8 +931,15 @@ public sealed partial class ConsoleForm : Form
         {
             float d = barH;
             float gap = u * 1.1f;
-            float x = w - mx - topBar!.Tiles.Count * d - (topBar.Tiles.Count - 1) * gap;
+            // Atualizações (o primeiro) fica um pouco afastado do grupo do Windows (energia e sair).
+            float groupGap = u * 2.4f;
+            int count = topBar!.Tiles.Count;
+            float x = w - mx - count * d - (count - 1) * gap - (count > 1 ? groupGap - gap : 0f);
             bool barActive = _rows[_row] == topBar;
+            using var badgeBrush = new SolidBrush(Theme.Success);
+            using var badgeRing = new Pen(Theme.BgTop, u * 0.3f);
+            using var progressPen = new Pen(Theme.Accent, u * 0.35f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            using var trackPen = new Pen(Color.FromArgb(60, Theme.Accent), u * 0.35f);
 
             using var glyphFont = new Font(Theme.IconFontName, d * 0.36f, GraphicsUnit.Pixel);
             using var fill = new SolidBrush(Color.FromArgb(170, Theme.Tile));
@@ -926,11 +956,12 @@ public sealed partial class ConsoleForm : Form
                 clockRight = sx - u * 2.2f;
             }
 
-            for (int i = 0; i < topBar.Tiles.Count; i++)
+            for (int i = 0; i < count; i++)
             {
                 var t = topBar.Tiles[i];
                 bool selected = barActive && i == _col;
-                var rect = new RectangleF(x + i * (d + gap), cy - d / 2f, d, d);
+                var rect = new RectangleF(x, cy - d / 2f, d, d);
+                x += d + (i == 0 ? groupGap : gap);
                 t.Bounds = rect;
 
                 if (selected)
@@ -948,6 +979,25 @@ public sealed partial class ConsoleForm : Form
 
                 // Os glifos da fonte de ícones já vêm centrados na caixa do caractere.
                 g.DrawString(t.Glyph, glyphFont, selected ? darkBrush : mutedBrush, rect, center);
+
+                // download em andamento: anel de progresso em volta do botão
+                if (t.Progress?.Invoke() is { } progress)
+                {
+                    var ring = rect;
+                    ring.Inflate(u * 0.55f, u * 0.55f);
+                    g.DrawEllipse(trackPen, ring);
+                    float sweep = (float)Math.Clamp(progress, 0d, 1d) * 360f;
+                    if (sweep > 0.5f) g.DrawArc(progressPen, ring, -90f, sweep);
+                }
+
+                // novidade (ex.: versão nova): bolinha no canto superior direito
+                if (t.Badge?.Invoke() == true)
+                {
+                    float bd = d * 0.3f;
+                    var dot = new RectangleF(rect.Right - bd * 0.85f, rect.Top - bd * 0.15f, bd, bd);
+                    g.FillEllipse(badgeBrush, dot);
+                    g.DrawEllipse(badgeRing, dot);
+                }
             }
         }
 
@@ -962,7 +1012,7 @@ public sealed partial class ConsoleForm : Form
         if (showPower && _rows[_row] == topBar && CurrentTile is { } powerTile)
         {
             using var boldFont = new Font(statusFont, FontStyle.Bold);
-            var sub = powerTile.Subtitle;
+            var sub = powerTile.LiveSubtitle?.Invoke() ?? powerTile.Subtitle;
             var subSize = g.MeasureString(sub, statusFont);
             var titleText = powerTile.Title + "   ·   ";
             var titleSize = g.MeasureString(titleText, boldFont);
@@ -1026,11 +1076,8 @@ public sealed partial class ConsoleForm : Form
         float y = h * 0.225f;
 
         using var rowTitleFont = new Font("Segoe UI", u * 1.9f, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var titleFont = new Font("Segoe UI", u * 2.0f, GraphicsUnit.Pixel);
-        using var titleSelFont = new Font("Segoe UI", u * 2.3f, FontStyle.Bold, GraphicsUnit.Pixel);
         using var subFont = new Font("Segoe UI", u * 1.7f, GraphicsUnit.Pixel);
         using var insideFont = new Font("Segoe UI", u * 1.7f, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var glyphFont = new Font(Theme.IconFontName, baseTile * 0.40f, GraphicsUnit.Pixel);
         using var pillFont = new Font("Segoe UI", u * 1.25f, FontStyle.Bold, GraphicsUnit.Pixel);
         using var arrowFont = new Font("Segoe UI", u * 3f, GraphicsUnit.Pixel);
         using var accentPen = new Pen(Theme.Accent, u * 0.35f);
@@ -1047,6 +1094,13 @@ public sealed partial class ConsoleForm : Form
             bool activeRow = r == _row;
             float th = baseTile * row.Scale;
             var widths = row.Tiles.Select(t => th * t.Aspect).ToArray();
+
+            // Fileira de tiles menores (Sistema): nomes e ícones proporcionalmente menores.
+            float fontScale = row.Scale < 1f ? 0.88f : 1f;
+            using var titleFont = new Font("Segoe UI", u * 2.0f * fontScale, GraphicsUnit.Pixel);
+            using var titleSelFont = new Font("Segoe UI", u * 2.3f * fontScale, FontStyle.Bold, GraphicsUnit.Pixel);
+            float minSide = th * Math.Min(1f, row.Tiles.Count > 0 ? row.Tiles.Min(t => t.Aspect) : 1f);
+            using var glyphFont = new Font(Theme.IconFontName, minSide * 0.40f, GraphicsUnit.Pixel);
 
             float Span(int from, int to)
             {
@@ -1093,7 +1147,7 @@ public sealed partial class ConsoleForm : Form
 
                 if (selected)
                 {
-                    rect.Inflate(baseTile * 0.05f, baseTile * 0.05f);
+                    rect.Inflate(th * 0.04f, th * 0.04f);
                     var glowRect = rect;
                     glowRect.Inflate(u * 0.9f, u * 0.9f);
                     using var glowPath = RoundedRect(glowRect, u * 2.2f);
@@ -1184,7 +1238,7 @@ public sealed partial class ConsoleForm : Form
             return;
         }
 
-        float side = capsule ? rect.Width * 0.55f : rect.Width * 0.5f;
+        float side = capsule ? rect.Width * 0.55f : Math.Min(rect.Width, rect.Height) * 0.5f;
         var imgRect = new RectangleF(rect.X + (rect.Width - side) / 2f, cy - side / 2f, side, side);
         if (activeRow)
         {

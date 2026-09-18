@@ -260,17 +260,7 @@ public sealed partial class ConsoleForm
             "Ao abrir o app, consulta as versões publicadas no GitHub e avisa na bandeja quando houver uma nova. " +
             "Nada é baixado nem instalado sem você confirmar.",
             () => _settings.Current.CheckForUpdatesOnStart, v => SetSetting(s => s.CheckForUpdatesOnStart = v));
-        _items.Add(new SettingItem
-        {
-            Title = "Verificar atualizações agora",
-            Description = "Consulta a release mais recente no GitHub. Se houver uma versão nova, pergunta antes de baixar o instalador " +
-                          "e executá-lo: o My Game Console é fechado, atualizado e reaberto ao final (o Windows pede o UAC).",
-            Value = () => _updates.StatusText,
-            Extra = () => _updates.Available is { } u
-                ? $"Novidades da versão {u.VersionText}:\n{(string.IsNullOrWhiteSpace(u.Notes) ? "(a release não tem notas)" : u.Notes)}"
-                : string.Empty,
-            OnSelect = () => _ = RunUpdateFlowAsync(),
-        });
+        // Verificar agora fica no botão de atualizações da barra do alto da tela inicial.
 
         Header("Avançado");
         _items.Add(new SettingItem
@@ -309,7 +299,7 @@ public sealed partial class ConsoleForm
 
             ShowNotice("Consultando as releases no GitHub...");
             var info = await _updates.CheckAsync();
-            if (!Visible || !_settingsOpen) return;
+            if (!Visible) return;
 
             if (info is null)
             {
@@ -325,6 +315,16 @@ public sealed partial class ConsoleForm
             ShowNotice(ex.Message, isError: true);
         }
     }
+
+    /// <summary>Texto do botão de atualizações na barra do alto: o que A vai fazer agora.</summary>
+    private string UpdateButtonText() => _updates.State switch
+    {
+        UpdateState.Available => $"Versão {_updates.Available!.VersionText} disponível: A baixa e instala",
+        UpdateState.ReadyToInstall => $"Versão {_updates.Available!.VersionText} baixada: A instala",
+        UpdateState.Checking or UpdateState.Downloading or UpdateState.Failed => _updates.StatusText,
+        UpdateState.UpToDate => $"{_updates.StatusText}. A verifica de novo",
+        _ => $"Versão {_updates.CurrentVersionText}. A verifica se há uma nova",
+    };
 
     private void ConfirmDownloadUpdate()
     {

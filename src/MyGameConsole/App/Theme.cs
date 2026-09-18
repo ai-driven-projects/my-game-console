@@ -33,6 +33,8 @@ public static class Theme
     public const string GlyphRefresh = "";
     public const string GlyphPower = "";
     public const string GlyphClose = "";
+    /// <summary>Download: o botão de atualizações na barra do alto da tela do console.</summary>
+    public const string GlyphDownload = "";
 
     private static string ResolveIconFont()
     {

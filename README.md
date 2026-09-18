@@ -10,8 +10,9 @@ esconder a área de trabalho, reagir à conexão de controles, atalhos rápidos 
 - **Tela do console** (`Ctrl+Alt+G` por padrão, configurável, ou segurando **− e +** / Back + Start no
   controle por meio segundo): launcher em tela cheia estilo PlayStation / Big Picture, navegável só com o
   controle (D-pad/analógico, A seleciona, B volta), teclado ou mouse.
-  Traz Big Picture, a biblioteca de jogos, atalhos, Modo Game e configurações. Suspender, reiniciar, desligar e
-  sair do app ficam em botões redondos no alto, ao lado do relógio (▲ a partir dos jogos; pedem confirmação na tela).
+  Traz Big Picture e a biblioteca de jogos em destaque, e embaixo, em cartões menores, Modo Game, Controle,
+  área de trabalho e configurações. No alto, ao lado do relógio (▲ a partir dos jogos), ficam botões redondos:
+  atualizações e, separados, suspender, reiniciar, desligar e sair do app (estes pedem confirmação na tela).
 - **Biblioteca de jogos do Steam**: a fileira "Jogos" mostra os jogos instalados com a capa vertical, do jogado
   mais recentemente para o mais antigo, e o fundo da tela troca para a arte do jogo selecionado, com a última vez
   jogado e as horas de jogo. A abre o jogo direto (pelo Steam, sem passar pelo Big Picture). Tudo vem dos arquivos
@@ -67,7 +68,8 @@ esconder a área de trabalho, reagir à conexão de controles, atalhos rápidos 
   atalhos continuam sendo abertos sem privilégios, via Explorer. Há também "Reiniciar o app agora como
   administrador" nas configurações do console.
 - **Atualizações pelo GitHub**: o app consulta as [releases do repositório](https://github.com/ai-driven-projects/my-game-console/releases)
-  ao iniciar (opcional) e pelo menu da bandeja ou pela tela do console ("Verificar atualizações agora").
+  ao iniciar (opcional) e pelo menu da bandeja ou pelo botão de atualizações no alto da tela do console, que
+  ganha uma marca verde quando há versão nova e mostra o progresso do download em volta dele.
   Havendo versão nova, baixa o MSI, confere o SHA-256 publicado e executa o instalador, que fecha o app,
   atualiza e o reabre. Nada é baixado nem instalado sem confirmação.
 - **Configurações** persistidas em `%LocalAppData%\MyGameConsole\settings.json`.
