@@ -41,6 +41,10 @@ Se `dotnet` não estiver no PATH da sessão, use `C:\Program Files\dotnet\dotnet
   (Big Picture, jogos) e usá-lo criaria conflito. Por isso a rolagem ficou no direcional ▲▼. Controles HID
   publicam o analógico direito como Z/Rz ou Rx/Ry — ver `HidGamepadDevice.ReadAxes`; os que não publicam
   nenhum dos pares precisam da opção "Analógico que move o cursor" em Esquerdo.
+- Biblioteca do Steam: `SteamLibraryService` lê os arquivos locais do Steam (parser VDF texto em `App/Vdf.cs`) e
+  `App/GameArtCache.cs` guarda as capas já redimensionadas e o fundo do jogo já composto (não redimensionar arte
+  a cada repintura). As artes ficam em três formatos de pasta no `librarycache`, conforme a versão do Steam: ver
+  `FindArt`. Na tela do console, a fileira 0 é a barra de energia (`Row.IsTopBar`), desenhada pelo cabeçalho.
 - O desenho do controle fica em `App/GamepadArt.cs`, sem depender do formulário: dá para renderizá-lo em um
   PNG por um projeto de teste separado para conferir a arte sem abrir o app.
 

@@ -23,6 +23,10 @@ public sealed partial class ConsoleForm : Form
         public string Subtitle { get; init; } = string.Empty;
         public required Action OnSelect { get; init; }
         public Func<bool>? IsOn { get; init; }
+        /// <summary>Jogo da biblioteca do Steam: o tile vira a capa vertical dele.</summary>
+        public SteamGame? Game { get; init; }
+        /// <summary>Largura / altura do tile (1 = quadrado; capas de jogo são 2:3).</summary>
+        public float Aspect { get; init; } = 1f;
         public RectangleF Bounds { get; set; }
     }
 
@@ -31,7 +35,14 @@ public sealed partial class ConsoleForm : Form
         public required string Title { get; init; }
         public List<Tile> Tiles { get; } = [];
         public int Scroll { get; set; }
+        /// <summary>Altura dos tiles em relação ao tamanho padrão (a fileira de jogos é mais alta).</summary>
+        public float Scale { get; init; } = 1f;
+        /// <summary>Botões pequenos de energia no alto da tela, desenhados pelo cabeçalho e não como fileira.</summary>
+        public bool IsTopBar { get; init; }
     }
+
+    private const float GameCapsuleAspect = 2f / 3f;
+    private const float GamesRowScale = 1.3f;
 
     private const short StickDeadZone = 16000;
     private static readonly TimeSpan RepeatDelay = TimeSpan.FromMilliseconds(420);
@@ -39,6 +50,8 @@ public sealed partial class ConsoleForm : Form
 
     private readonly SettingsService _settings;
     private readonly SteamService _steam;
+    private readonly SteamLibraryService _library;
+    private readonly GameArtCache _art = new();
     private readonly GameModeService _gameMode;
     private readonly PowerService _power;
     private readonly DisplayService _display;
@@ -53,7 +66,7 @@ public sealed partial class ConsoleForm : Form
     private readonly Action _restartElevated;
 
     private readonly List<Row> _rows = [];
-    private int _row;
+    private int _row = 1; // 0 é a barra de energia no alto; começa na fileira de jogos
     private int _col;
 
     private readonly System.Windows.Forms.Timer _inputTimer = new() { Interval = 40 };
@@ -81,6 +94,7 @@ public sealed partial class ConsoleForm : Form
     public ConsoleForm(
         SettingsService settings,
         SteamService steam,
+        SteamLibraryService library,
         GameModeService gameMode,
         PowerService power,
         DisplayService display,
@@ -96,6 +110,7 @@ public sealed partial class ConsoleForm : Form
     {
         _settings = settings;
         _steam = steam;
+        _library = library;
         _gameMode = gameMode;
         _power = power;
         _display = display;
@@ -133,6 +148,7 @@ public sealed partial class ConsoleForm : Form
     /// <summary>Mostra (ou traz para frente) a tela do console em tela cheia no monitor principal.</summary>
     public void ShowLauncher()
     {
+        if (_row == 0) (_row, _col) = (1, 0); // não reabrir com "Desligar" selecionado
         BuildTiles();
         _confirmText = null;
         _confirmAction = null;
@@ -187,6 +203,7 @@ public sealed partial class ConsoleForm : Form
             _inputTimer.Dispose();
             _clockTimer.Dispose();
             _steamIcon?.Dispose();
+            _art.Dispose();
         }
 
         base.Dispose(disposing);
@@ -198,17 +215,68 @@ public sealed partial class ConsoleForm : Form
 
     private void BuildTiles()
     {
+        // A lista é refeita a cada abertura (jogos instalados e ordem de "jogado por último" mudam);
+        // a seleção acompanha o mesmo item, não a mesma posição.
+        var selectedTitle = CurrentTile?.Title;
         _rows.Clear();
 
-        var games = new Row { Title = "Jogos e apps" };
+        var power = new Row { Title = "Energia", IsTopBar = true };
+        power.Tiles.Add(new Tile
+        {
+            Glyph = Theme.GlyphMoon,
+            Title = "Suspender",
+            Subtitle = "Suspende o PC, ou só apaga a tela e a luz do teclado (o controle acorda).",
+            OnSelect = () => Choose(
+                "Suspender o computador ou só apagar tela e teclado?",
+                "Suspender o PC", () => { Hide(); _power.Sleep(); },
+                "Só tela e teclado", EnterScreenOff,
+                defaultLeft: true),
+        });
+        power.Tiles.Add(new Tile
+        {
+            Glyph = Theme.GlyphRefresh,
+            Title = "Reiniciar",
+            Subtitle = "Reinicia o computador.",
+            OnSelect = () => Confirm("Reiniciar o computador?", _power.Restart),
+        });
+        power.Tiles.Add(new Tile
+        {
+            Glyph = Theme.GlyphPower,
+            Title = "Desligar",
+            Subtitle = "Desliga o computador.",
+            OnSelect = () => Confirm("Desligar o computador?", _power.Shutdown),
+        });
+        power.Tiles.Add(new Tile
+        {
+            Glyph = Theme.GlyphClose,
+            Title = "Sair do app",
+            Subtitle = "Fecha o My Game Console (o Modo Game continua aplicado).",
+            OnSelect = () => Confirm("Fechar o My Game Console?", _exitApp),
+        });
+
+        var games = new Row { Title = "Jogos", Scale = GamesRowScale };
         games.Tiles.Add(new Tile
         {
             Glyph = Theme.GlyphPlay,
             Image = SteamIcon(),
             Title = "Steam Big Picture",
             Subtitle = SteamStatusText(),
+            Aspect = GameCapsuleAspect,
             OnSelect = () => _ = OpenBigPictureFromConsoleAsync(),
         });
+
+        foreach (var game in _library.LoadInstalledGames())
+        {
+            games.Tiles.Add(new Tile
+            {
+                Glyph = Theme.GlyphGame,
+                Title = game.Name,
+                Subtitle = GameUsageText(game),
+                Game = game,
+                Aspect = GameCapsuleAspect,
+                OnSelect = () => _ = LaunchGameFromConsoleAsync(game),
+            });
+        }
 
         foreach (var sc in _settings.Current.Shortcuts)
         {
@@ -218,6 +286,7 @@ public sealed partial class ConsoleForm : Form
                 Glyph = Theme.GlyphPlay,
                 Title = shortcut.Name,
                 Subtitle = SafeFileName(shortcut.Path),
+                Aspect = GameCapsuleAspect,
                 OnSelect = () => { _launchShortcut(shortcut); Hide(); },
             });
         }
@@ -253,44 +322,72 @@ public sealed partial class ConsoleForm : Form
             Subtitle = "Opções do app, Modo Game, controle e atalhos, tudo pelo controle.",
             OnSelect = OpenSettingsPage,
         });
-        system.Tiles.Add(new Tile
-        {
-            Glyph = Theme.GlyphMoon,
-            Title = "Suspender",
-            Subtitle = "Suspende o PC, ou só apaga a tela e a luz do teclado (o controle acorda).",
-            OnSelect = () => Choose(
-                "Suspender o computador ou só apagar tela e teclado?",
-                "Suspender o PC", () => { Hide(); _power.Sleep(); },
-                "Só tela e teclado", EnterScreenOff,
-                defaultLeft: true),
-        });
-        system.Tiles.Add(new Tile
-        {
-            Glyph = Theme.GlyphRefresh,
-            Title = "Reiniciar",
-            Subtitle = "Reinicia o computador.",
-            OnSelect = () => Confirm("Reiniciar o computador?", _power.Restart),
-        });
-        system.Tiles.Add(new Tile
-        {
-            Glyph = Theme.GlyphPower,
-            Title = "Desligar",
-            Subtitle = "Desliga o computador.",
-            OnSelect = () => Confirm("Desligar o computador?", _power.Shutdown),
-        });
-        system.Tiles.Add(new Tile
-        {
-            Glyph = Theme.GlyphClose,
-            Title = "Sair do app",
-            Subtitle = "Fecha o My Game Console (o Modo Game continua aplicado).",
-            OnSelect = () => Confirm("Fechar o My Game Console?", _exitApp),
-        });
 
+        _rows.Add(power);
         _rows.Add(games);
         _rows.Add(system);
 
         _row = Math.Clamp(_row, 0, _rows.Count - 1);
         _col = Math.Clamp(_col, 0, _rows[_row].Tiles.Count - 1);
+
+        if (selectedTitle is not null && CurrentTile?.Title != selectedTitle)
+        {
+            int col = _rows[_row].Tiles.FindIndex(t => t.Title == selectedTitle);
+            if (col >= 0) _col = col;
+        }
+    }
+
+    /// <summary>"Jogado hoje · 12 h de jogo", a partir do que o Steam registra na conta.</summary>
+    private static string GameUsageText(SteamGame game)
+    {
+        if (game.LastPlayed is not { } last) return "Ainda não jogado";
+
+        int days = (DateTime.Today - last.Date).Days;
+        var when = days switch
+        {
+            <= 0 => "Jogado hoje",
+            1 => "Jogado ontem",
+            < 30 => $"Jogado há {days} dias",
+            _ => $"Jogado em {last:d 'de' MMMM 'de' yyyy}",
+        };
+
+        var time = game.PlaytimeMinutes switch
+        {
+            <= 0 => null,
+            < 60 => $"{game.PlaytimeMinutes} min de jogo",
+            var m => $"{m / 60} h de jogo",
+        };
+
+        return time is null ? when : $"{when}   ·   {time}";
+    }
+
+    /// <summary>
+    /// Inicia o jogo pelo Steam e mantém esta tela (que fica sempre por cima) até outra janela tomar o
+    /// primeiro plano: o próprio jogo ou algum aviso do Steam (atualização, nuvem). Esconder antes faria o
+    /// Windows recusar o foco para o jogo, e esconder só no fim do tempo deixaria o jogo atrás desta tela.
+    /// </summary>
+    private async Task LaunchGameFromConsoleAsync(SteamGame game)
+    {
+        try
+        {
+            ShowNotice($"Abrindo {game.Name}...");
+            _library.Launch(game);
+
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+            while (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(250);
+                if (!Visible) return; // o usuário fechou esta tela enquanto esperava
+                var foreground = NativeMethods.GetForegroundWindow();
+                if (foreground != IntPtr.Zero && foreground != Handle) break;
+            }
+
+            if (Visible) Hide();
+        }
+        catch (Exception ex)
+        {
+            ShowNotice(ex.Message, isError: true);
+        }
     }
 
     private Bitmap? _steamIcon;
@@ -388,8 +485,15 @@ public sealed partial class ConsoleForm : Form
 
         if (dy != 0)
         {
-            _row = Math.Clamp(_row + dy, 0, _rows.Count - 1);
-            _col = Math.Clamp(_col, 0, _rows[_row].Tiles.Count - 1);
+            // Os tiles têm larguras diferentes em cada fileira (e a barra de energia fica à direita):
+            // vai para o tile da outra fileira mais próximo na horizontal, não para a mesma posição.
+            float fromX = CurrentTile is { Bounds.IsEmpty: false } from ? from.Bounds.X + from.Bounds.Width / 2f : float.NaN;
+            int target = Math.Clamp(_row + dy, 0, _rows.Count - 1);
+            if (target != _row)
+            {
+                _row = target;
+                _col = float.IsNaN(fromX) ? Math.Clamp(_col, 0, _rows[_row].Tiles.Count - 1) : NearestTile(_rows[_row], fromX);
+            }
         }
 
         if (dx != 0)
@@ -398,6 +502,26 @@ public sealed partial class ConsoleForm : Form
         }
 
         Invalidate();
+    }
+
+    /// <summary>Índice do tile visível da fileira cujo centro está mais perto de <paramref name="x"/>.</summary>
+    private static int NearestTile(Row row, float x)
+    {
+        int best = Math.Clamp(row.Scroll, 0, Math.Max(0, row.Tiles.Count - 1));
+        float bestDistance = float.MaxValue;
+        for (int i = 0; i < row.Tiles.Count; i++)
+        {
+            var b = row.Tiles[i].Bounds;
+            if (b.IsEmpty) continue; // fora da tela
+            float distance = Math.Abs(b.X + b.Width / 2f - x);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = i;
+            }
+        }
+
+        return best;
     }
 
     private void ActivateSelection()
@@ -725,8 +849,15 @@ public sealed partial class ConsoleForm : Form
         }
     }
 
-    private static void DrawBackground(Graphics g, int w, int h)
+    private void DrawBackground(Graphics g, int w, int h)
     {
+        // Na tela inicial, com um jogo selecionado, o fundo vira a arte panorâmica dele (estilo PS5).
+        if (!_settingsOpen && CurrentTile?.Game is { } game && _art.Backdrop(game, new Size(w, h)) is { } backdrop)
+        {
+            g.DrawImageUnscaled(backdrop, 0, 0);
+            return;
+        }
+
         using (var bg = new LinearGradientBrush(new Rectangle(0, 0, w, h), Theme.BgTop, Theme.BgBottom, 90f))
         {
             g.FillRectangle(bg, 0, 0, w, h);
@@ -743,29 +874,103 @@ public sealed partial class ConsoleForm : Form
         g.FillPath(glow, glowPath);
     }
 
+    /// <summary>
+    /// Cabeçalho numa linha só, tudo centrado no mesmo eixo: à esquerda o controle e o nome do app; à direita
+    /// o relógio e (na tela inicial) os botões de energia. Embaixo, à direita, o status ou o nome do botão
+    /// de energia selecionado.
+    /// </summary>
     private void DrawHeader(Graphics g, int w, int h)
     {
         float u = h / 100f;
         float mx = w * 0.06f;
-        float top = u * 4.5f;
+        float barTop = u * 4.5f;
+        float barH = u * 5.6f;
+        float cy = barTop + barH / 2f;
 
-        using var brandFont = new Font("Segoe UI", u * 2.3f, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var glyphFont = new Font(Theme.IconFontName, u * 3.2f, GraphicsUnit.Pixel);
-        using var clockFont = new Font("Segoe UI Light", u * 5f, GraphicsUnit.Pixel);
-        using var statusFont = new Font("Segoe UI", u * 1.8f, GraphicsUnit.Pixel);
         using var textBrush = new SolidBrush(Theme.Text);
         using var mutedBrush = new SolidBrush(Theme.Muted);
         using var accentBrush = new SolidBrush(Theme.Accent);
 
-        // marca
-        g.DrawString(Theme.GlyphGame, glyphFont, accentBrush, mx, top);
-        g.DrawString("MY GAME CONSOLE", brandFont, textBrush, mx + u * 4.2f, top + u * 0.5f);
+        // marca: glifo do controle e nome, alinhados pelo centro do desenho (não da caixa da fonte)
+        float brandRight = DrawInkCentered(g, Theme.GlyphGame, Theme.IconFontName, FontStyle.Regular, u * 3.6f, accentBrush, mx, cy);
+        DrawInkCentered(g, "MY GAME CONSOLE", "Segoe UI", FontStyle.Bold, u * 2.3f, textBrush, brandRight + u * 1.5f, cy);
 
-        // relógio + status à direita
+        var topBar = _rows.FirstOrDefault(r => r.IsTopBar);
+        bool showPower = !_settingsOpen && topBar is not null;
+        float clockRight = w - mx;
+
+        if (topBar is not null)
+        {
+            foreach (var t in topBar.Tiles) t.Bounds = RectangleF.Empty;
+        }
+
+        if (showPower)
+        {
+            float d = barH;
+            float gap = u * 1.1f;
+            float x = w - mx - topBar!.Tiles.Count * d - (topBar.Tiles.Count - 1) * gap;
+            bool barActive = _rows[_row] == topBar;
+
+            using var glyphFont = new Font(Theme.IconFontName, d * 0.36f, GraphicsUnit.Pixel);
+            using var fill = new SolidBrush(Color.FromArgb(170, Theme.Tile));
+            using var darkBrush = new SolidBrush(Theme.BgTop);
+            using var glowBrush = new SolidBrush(Color.FromArgb(70, Theme.Accent));
+            using var ringPen = new Pen(Color.FromArgb(60, Theme.Muted), u * 0.12f);
+            var center = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+
+            // divisória entre o relógio e os botões
+            using (var sepPen = new Pen(Color.FromArgb(70, Theme.Muted), u * 0.12f))
+            {
+                float sx = x - u * 2.2f;
+                g.DrawLine(sepPen, sx, cy - u * 1.7f, sx, cy + u * 1.7f);
+                clockRight = sx - u * 2.2f;
+            }
+
+            for (int i = 0; i < topBar.Tiles.Count; i++)
+            {
+                var t = topBar.Tiles[i];
+                bool selected = barActive && i == _col;
+                var rect = new RectangleF(x + i * (d + gap), cy - d / 2f, d, d);
+                t.Bounds = rect;
+
+                if (selected)
+                {
+                    var glow = rect;
+                    glow.Inflate(u * 0.6f, u * 0.6f);
+                    g.FillEllipse(glowBrush, glow);
+                    g.FillEllipse(accentBrush, rect);
+                }
+                else
+                {
+                    g.FillEllipse(fill, rect);
+                    g.DrawEllipse(ringPen, rect);
+                }
+
+                // Os glifos da fonte de ícones já vêm centrados na caixa do caractere.
+                g.DrawString(t.Glyph, glyphFont, selected ? darkBrush : mutedBrush, rect, center);
+            }
+        }
+
+        // relógio
         var now = DateTime.Now;
-        var time = now.ToString("HH:mm");
-        var timeSize = g.MeasureString(time, clockFont);
-        g.DrawString(time, clockFont, textBrush, w - mx - timeSize.Width, top - u * 1.2f);
+        DrawInkCentered(g, now.ToString("HH:mm"), "Segoe UI Light", FontStyle.Regular, u * 4.4f, textBrush, clockRight, cy, alignRight: true);
+
+        // linha de baixo: nome do botão de energia selecionado, ou o status
+        using var statusFont = new Font("Segoe UI", u * 1.8f, GraphicsUnit.Pixel);
+        float statusY = barTop + barH + u * 1.3f;
+
+        if (showPower && _rows[_row] == topBar && CurrentTile is { } powerTile)
+        {
+            using var boldFont = new Font(statusFont, FontStyle.Bold);
+            var sub = powerTile.Subtitle;
+            var subSize = g.MeasureString(sub, statusFont);
+            var titleText = powerTile.Title + "   ·   ";
+            var titleSize = g.MeasureString(titleText, boldFont);
+            float right = w - mx;
+            g.DrawString(sub, statusFont, mutedBrush, right - subSize.Width, statusY);
+            g.DrawString(titleText, boldFont, accentBrush, right - subSize.Width - titleSize.Width, statusY);
+            return;
+        }
 
         var pads = _controllers.ConnectedCount switch
         {
@@ -779,44 +984,85 @@ public sealed partial class ConsoleForm : Form
             : "Steam fechado";
         var status = $"{now:dddd, d 'de' MMMM}   ·   {pads}   ·   {steam}";
         var statusSize = g.MeasureString(status, statusFont);
-        g.DrawString(status, statusFont, mutedBrush, w - mx - statusSize.Width, top + u * 4.6f);
+        g.DrawString(status, statusFont, mutedBrush, w - mx - statusSize.Width, statusY);
+    }
+
+    /// <summary>
+    /// Desenha o texto com o centro vertical da tinta em <paramref name="cy"/>. O <c>DrawString</c> centra a
+    /// caixa da linha, que inclui espaço para acentos e descendentes, e por isso cada fonte (a de ícones, a do
+    /// texto, a do relógio) ficava numa altura diferente. Começa em <paramref name="x"/> (ou termina nele,
+    /// com <paramref name="alignRight"/>) e devolve a borda direita do desenho.
+    /// </summary>
+    private static float DrawInkCentered(Graphics g, string text, string family, FontStyle style, float emPixels,
+        Brush brush, float x, float cy, bool alignRight = false)
+    {
+        using var path = new GraphicsPath();
+        using (var ff = new FontFamily(family))
+        {
+            path.AddString(text, ff, (int)style, emPixels, PointF.Empty, StringFormat.GenericTypographic);
+        }
+
+        var ink = path.GetBounds();
+        if (ink.IsEmpty) return x;
+
+        float left = alignRight ? x - ink.Width : x;
+        using (var m = new Matrix())
+        {
+            m.Translate(left - ink.X, cy - (ink.Y + ink.Height / 2f));
+            path.Transform(m);
+        }
+
+        g.FillPath(brush, path);
+        return left + ink.Width;
     }
 
     private void DrawRows(Graphics g, int w, int h)
     {
         float u = h / 100f;
-        float tile = Math.Min(w / 7.5f, h * 0.21f);
-        float gap = tile * 0.14f;
+        float baseTile = Math.Min(w / 7.5f, h * 0.19f);
+        float gap = baseTile * 0.14f;
         float mx = w * 0.06f;
-        float top = h * 0.22f;
-        float rowHeight = tile * 1.12f + u * 11f;
         float avail = w - 2 * mx;
-        int visible = Math.Max(1, (int)((avail + gap) / (tile + gap)));
+        float y = h * 0.225f;
 
         using var rowTitleFont = new Font("Segoe UI", u * 1.9f, FontStyle.Bold, GraphicsUnit.Pixel);
         using var titleFont = new Font("Segoe UI", u * 2.0f, GraphicsUnit.Pixel);
         using var titleSelFont = new Font("Segoe UI", u * 2.3f, FontStyle.Bold, GraphicsUnit.Pixel);
         using var subFont = new Font("Segoe UI", u * 1.7f, GraphicsUnit.Pixel);
-        using var glyphFont = new Font(Theme.IconFontName, tile * 0.40f, GraphicsUnit.Pixel);
+        using var insideFont = new Font("Segoe UI", u * 1.7f, FontStyle.Bold, GraphicsUnit.Pixel);
+        using var glyphFont = new Font(Theme.IconFontName, baseTile * 0.40f, GraphicsUnit.Pixel);
         using var pillFont = new Font("Segoe UI", u * 1.25f, FontStyle.Bold, GraphicsUnit.Pixel);
         using var arrowFont = new Font("Segoe UI", u * 3f, GraphicsUnit.Pixel);
         using var accentPen = new Pen(Theme.Accent, u * 0.35f);
 
         var center = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         var topCenter = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Near, Trimming = StringTrimming.EllipsisCharacter };
+        var oneLine = new StringFormat(topCenter) { FormatFlags = StringFormatFlags.NoWrap };
 
         for (int r = 0; r < _rows.Count; r++)
         {
             var row = _rows[r];
-            bool activeRow = r == _row;
-            float y = top + r * rowHeight;
+            if (row.IsTopBar) continue;
 
-            if (activeRow)
+            bool activeRow = r == _row;
+            float th = baseTile * row.Scale;
+            var widths = row.Tiles.Select(t => th * t.Aspect).ToArray();
+
+            float Span(int from, int to)
+            {
+                float s = 0;
+                for (int i = from; i <= to; i++) s += widths[i];
+                return s + Math.Max(0, to - from) * gap;
+            }
+
+            // rolagem: o selecionado sempre inteiro na tela, sem sobrar espaço vazio no fim
+            if (activeRow && row.Tiles.Count > 0)
             {
                 if (_col < row.Scroll) row.Scroll = _col;
-                if (_col >= row.Scroll + visible) row.Scroll = _col - visible + 1;
+                while (row.Scroll < _col && Span(row.Scroll, _col) > avail) row.Scroll++;
             }
-            row.Scroll = Math.Clamp(row.Scroll, 0, Math.Max(0, row.Tiles.Count - visible));
+            row.Scroll = Math.Clamp(row.Scroll, 0, Math.Max(0, row.Tiles.Count - 1));
+            while (row.Scroll > 0 && Span(row.Scroll - 1, row.Tiles.Count - 1) <= avail) row.Scroll--;
 
             int alpha = activeRow ? 255 : 120;
             using var rowBrush = new SolidBrush(activeRow ? Theme.Text : Theme.Muted);
@@ -825,23 +1071,29 @@ public sealed partial class ConsoleForm : Form
             using var tileBrush = new SolidBrush(Color.FromArgb(alpha, Theme.Tile));
             using var tileSelBrush = new SolidBrush(Color.FromArgb(alpha, Theme.TileSelected));
             using var glowBrush = new SolidBrush(Color.FromArgb(60, Theme.Accent));
+            using var dimBrush = new SolidBrush(Color.FromArgb(255 - alpha, Theme.BgTop));
 
             g.DrawString(row.Title.ToUpperInvariant(), rowTitleFont, rowBrush, mx, y - u * 4.6f);
 
             // limpa retângulos de tiles fora da tela (para o mouse não acertá-los)
             foreach (var t in row.Tiles) t.Bounds = RectangleF.Empty;
 
-            int last = Math.Min(row.Tiles.Count, row.Scroll + visible);
-            for (int i = row.Scroll; i < last; i++)
+            int last = row.Scroll;
+            float x = mx;
+            for (int i = row.Scroll; i < row.Tiles.Count; i++)
             {
+                if (x + widths[i] > mx + avail + 0.5f) break;
+
                 var t = row.Tiles[i];
                 bool selected = activeRow && i == _col;
-                float x = mx + (i - row.Scroll) * (tile + gap);
-                var rect = new RectangleF(x, y, tile, tile);
+                var baseRect = new RectangleF(x, y, widths[i], th);
+                var rect = baseRect;
+                x += widths[i] + gap;
+                last = i + 1;
 
                 if (selected)
                 {
-                    rect.Inflate(tile * 0.05f, tile * 0.05f);
+                    rect.Inflate(baseTile * 0.05f, baseTile * 0.05f);
                     var glowRect = rect;
                     glowRect.Inflate(u * 0.9f, u * 0.9f);
                     using var glowPath = RoundedRect(glowRect, u * 2.2f);
@@ -849,33 +1101,33 @@ public sealed partial class ConsoleForm : Form
                 }
 
                 t.Bounds = rect;
+                bool capsule = t.Aspect < 1f;
+                using var path = RoundedRect(rect, u * 1.8f);
 
-                using (var path = RoundedRect(rect, u * 1.8f))
+                var art = t.Game is { } game ? _art.Capsule(game, Size.Round(baseRect.Size)) : null;
+                if (art is not null)
                 {
-                    g.FillPath(selected ? tileSelBrush : tileBrush, path);
-                    if (selected) g.DrawPath(accentPen, path);
-                }
-
-                if (t.Image is { } image)
-                {
-                    float side = tile * 0.5f;
-                    var imgRect = new RectangleF(rect.X + (rect.Width - side) / 2f, rect.Y + (rect.Height - side) / 2f, side, side);
-                    if (activeRow)
-                    {
-                        g.DrawImage(image, imgRect);
-                    }
-                    else
-                    {
-                        // fileira inativa: mesma transparência dos glifos
-                        using var attrs = new System.Drawing.Imaging.ImageAttributes();
-                        attrs.SetColorMatrix(new System.Drawing.Imaging.ColorMatrix { Matrix33 = alpha / 255f });
-                        g.DrawImage(image, Rectangle.Round(imgRect), 0, 0, image.Width, image.Height, GraphicsUnit.Pixel, attrs);
-                    }
+                    // Pincel de textura em vez de recorte: bordas arredondadas suavizadas.
+                    using var artBrush = new TextureBrush(art, WrapMode.Clamp);
+                    artBrush.TranslateTransform(rect.X, rect.Y);
+                    artBrush.ScaleTransform(rect.Width / art.Width, rect.Height / art.Height);
+                    g.FillPath(artBrush, path);
+                    if (!activeRow) g.FillPath(dimBrush, path);
                 }
                 else
                 {
-                    g.DrawString(t.Glyph, glyphFont, textBrush, rect, center);
+                    g.FillPath(selected ? tileSelBrush : tileBrush, path);
+                    DrawTileIcon(g, t, rect, capsule, alpha, activeRow, glyphFont, textBrush, center);
+
+                    if (capsule)
+                    {
+                        // Sem capa, o nome vai dentro do tile, como numa capa de verdade.
+                        var nameRect = new RectangleF(rect.X + u * 1f, rect.Y + rect.Height * 0.66f, rect.Width - u * 2f, rect.Height * 0.3f);
+                        g.DrawString(t.Title, insideFont, textBrush, nameRect, topCenter);
+                    }
                 }
+
+                if (selected) g.DrawPath(accentPen, path);
 
                 if (t.IsOn is not null)
                 {
@@ -883,34 +1135,73 @@ public sealed partial class ConsoleForm : Form
                     var pillText = on ? "LIGADO" : "DESLIGADO";
                     var pillSize = g.MeasureString(pillText, pillFont);
                     var pill = new RectangleF(rect.Right - pillSize.Width - u * 2.4f, rect.Top + u * 1.2f, pillSize.Width + u * 1.6f, pillSize.Height + u * 0.4f);
-                    using var pillBrush = new SolidBrush(Color.FromArgb(alpha, on ? Theme.Success : Color.FromArgb(90, 100, 110)));
+                    using var pillBrush = new SolidBrush(Color.FromArgb(alpha, on ? Theme.Success : Theme.PillOff));
                     using var pillPath = RoundedRect(pill, pill.Height / 2f);
                     g.FillPath(pillBrush, pillPath);
                     g.DrawString(pillText, pillFont, textBrush, pill, center);
                 }
 
-                var labelRect = new RectangleF(rect.X - gap * 0.4f, rect.Bottom + u * 1.2f, rect.Width + gap * 0.8f, u * 3.2f);
-                g.DrawString(t.Title, selected ? titleSelFont : titleFont, textBrush, labelRect, topCenter);
-
-                if (selected && !string.IsNullOrEmpty(t.Subtitle))
+                // Capas já trazem o nome: o título embaixo só aparece no selecionado. Tiles quadrados sempre têm.
+                if (!capsule || selected)
                 {
-                    var subRect = new RectangleF(rect.X - tile * 0.6f, labelRect.Bottom + u * 0.3f, rect.Width + tile * 1.2f, u * 4.5f);
-                    if (subRect.X < mx * 0.5f) subRect.X = mx * 0.5f;
-                    if (subRect.Right > w - mx * 0.5f) subRect.X = w - mx * 0.5f - subRect.Width;
-                    g.DrawString(t.Subtitle, subFont, subBrush, subRect, topCenter);
+                    float labelW = capsule ? Math.Max(rect.Width + gap * 0.8f, baseTile * 2.6f) : rect.Width + gap * 0.8f;
+                    var labelRect = new RectangleF(rect.X + rect.Width / 2f - labelW / 2f, rect.Bottom + u * 1.2f, labelW, u * 3.2f);
+                    KeepInside(ref labelRect, w, mx);
+                    g.DrawString(t.Title, selected ? titleSelFont : titleFont, textBrush, labelRect, oneLine);
+
+                    if (selected && !string.IsNullOrEmpty(t.Subtitle))
+                    {
+                        var subRect = new RectangleF(rect.X + rect.Width / 2f - baseTile * 1.4f, labelRect.Bottom + u * 0.3f, baseTile * 2.8f, u * 4.5f);
+                        KeepInside(ref subRect, w, mx);
+                        g.DrawString(t.Subtitle, subFont, subBrush, subRect, topCenter);
+                    }
                 }
             }
 
             // indicadores de rolagem
             if (row.Scroll > 0)
             {
-                g.DrawString("‹", arrowFont, rowBrush, new RectangleF(mx * 0.35f, y, mx * 0.5f, tile), center);
+                g.DrawString("‹", arrowFont, rowBrush, new RectangleF(mx * 0.35f, y, mx * 0.5f, th), center);
             }
             if (last < row.Tiles.Count)
             {
-                g.DrawString("›", arrowFont, rowBrush, new RectangleF(w - mx * 0.85f, y, mx * 0.5f, tile), center);
+                g.DrawString("›", arrowFont, rowBrush, new RectangleF(w - mx * 0.85f, y, mx * 0.5f, th), center);
             }
+
+            y += th + u * 14.5f;
         }
+    }
+
+    /// <summary>Ícone do tile sem capa: a imagem (ex.: ícone do Steam) ou o glifo. Nas capas, fica no alto.</summary>
+    private static void DrawTileIcon(Graphics g, Tile t, RectangleF rect, bool capsule, int alpha, bool activeRow,
+        Font glyphFont, Brush textBrush, StringFormat center)
+    {
+        float cy = capsule ? rect.Y + rect.Height * 0.4f : rect.Y + rect.Height / 2f;
+
+        if (t.Image is not { } image)
+        {
+            g.DrawString(t.Glyph, glyphFont, textBrush, new RectangleF(rect.X, cy - rect.Width / 2f, rect.Width, rect.Width), center);
+            return;
+        }
+
+        float side = capsule ? rect.Width * 0.55f : rect.Width * 0.5f;
+        var imgRect = new RectangleF(rect.X + (rect.Width - side) / 2f, cy - side / 2f, side, side);
+        if (activeRow)
+        {
+            g.DrawImage(image, imgRect);
+            return;
+        }
+
+        // fileira inativa: mesma transparência dos glifos
+        using var attrs = new System.Drawing.Imaging.ImageAttributes();
+        attrs.SetColorMatrix(new System.Drawing.Imaging.ColorMatrix { Matrix33 = alpha / 255f });
+        g.DrawImage(image, Rectangle.Round(imgRect), 0, 0, image.Width, image.Height, GraphicsUnit.Pixel, attrs);
+    }
+
+    private static void KeepInside(ref RectangleF rect, int w, float mx)
+    {
+        if (rect.X < mx * 0.5f) rect.X = mx * 0.5f;
+        if (rect.Right > w - mx * 0.5f) rect.X = w - mx * 0.5f - rect.Width;
     }
 
     private void DrawFooter(Graphics g, int w, int h)

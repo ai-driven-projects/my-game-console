@@ -16,6 +16,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private readonly SettingsService _settings = new();
     private readonly SteamService _steam;
+    private readonly SteamLibraryService _library;
     private readonly ControllerService _controllers;
     private readonly ShellService _shell = new();
     private readonly PowerService _power = new();
@@ -46,6 +47,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _settings.Load();
         _controllers = new ControllerService(_settings);
         _steam = new SteamService(_settings);
+        _library = new SteamLibraryService(_steam);
         _consoleMode = new ConsoleModeService(_settings, _shell, _steam);
         _gameMode = new GameModeService(_settings, _tweaks, _power);
         _controllerCombo = new ControllerComboService(_controllers);
@@ -327,7 +329,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         if (_console is null || _console.IsDisposed)
         {
             _console = new ConsoleForm(
-                _settings, _steam, _gameMode, _power, _display, _backlight, _controllers, _mouse, _keyboard, _updates,
+                _settings, _steam, _library, _gameMode, _power, _display, _backlight, _controllers, _mouse, _keyboard, _updates,
                 openSettings: ShowSettings,
                 launchShortcut: LaunchShortcut,
                 exitApp: ExitApplication,

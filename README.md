@@ -10,7 +10,13 @@ esconder a área de trabalho, reagir à conexão de controles, atalhos rápidos 
 - **Tela do console** (`Ctrl+Alt+G` por padrão, configurável, ou segurando **− e +** / Back + Start no
   controle por meio segundo): launcher em tela cheia estilo PlayStation / Big Picture, navegável só com o
   controle (D-pad/analógico, A seleciona, B volta), teclado ou mouse.
-  Traz Big Picture, atalhos, Modo Game, configurações, suspender, reiniciar e desligar (com confirmação na tela).
+  Traz Big Picture, a biblioteca de jogos, atalhos, Modo Game e configurações. Suspender, reiniciar, desligar e
+  sair do app ficam em botões redondos no alto, ao lado do relógio (▲ a partir dos jogos; pedem confirmação na tela).
+- **Biblioteca de jogos do Steam**: a fileira "Jogos" mostra os jogos instalados com a capa vertical, do jogado
+  mais recentemente para o mais antigo, e o fundo da tela troca para a arte do jogo selecionado, com a última vez
+  jogado e as horas de jogo. A abre o jogo direto (pelo Steam, sem passar pelo Big Picture). Tudo vem dos arquivos
+  locais do Steam (`libraryfolders.vdf`, `appmanifest_*.acf`, `localconfig.vdf` e as artes em
+  `appcache/librarycache`), sem internet nem login; ferramentas como Proton e redistribuíveis ficam de fora.
 - **Configurações dentro da tela do console**: página com lista grande e navegável só com o controle
   (A alterna/seleciona, ◀ ▶ ajusta, B volta), painel de descrição ao lado e salvamento imediato. Captura a
   tecla de atalho pelo teclado e o mapeamento dos botões HID pressionando o botão no próprio controle.
