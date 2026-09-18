@@ -7,17 +7,20 @@ namespace MyGameConsole.Services.Recording;
 internal readonly record struct AudioChunk(long Time, short[] Samples);
 
 /// <summary>
-/// Som que está saindo no PC (o que se ouve nos alto-falantes ou no fone), pelo modo loopback do WASAPI.
-/// Roda numa thread própria e entrega trechos já em PCM 16 bits estéreo 48 kHz em <see cref="Chunks"/>,
-/// cada um com o horário em que foi tocado — é por ele que a gravação alinha o som com a imagem.
+/// Captura de som pelo WASAPI: o que está saindo no PC (alto-falantes ou fone, pelo modo loopback) ou o
+/// microfone padrão. Roda numa thread própria e entrega trechos já em PCM 16 bits estéreo 48 kHz em
+/// <see cref="Chunks"/>, cada um com o horário em que foi tocado ou captado — é por ele que a gravação alinha
+/// o som com a imagem (e o microfone com o som do PC).
 ///
-/// Sem nada tocando, o Windows não entrega nada (nem silêncio): quem grava completa os buracos.
-/// Se a saída de som padrão mudar (fone conectado, por exemplo), a captura passa para a nova sozinha.
+/// No loopback, sem nada tocando, o Windows não entrega nada (nem silêncio): quem grava completa os buracos.
+/// Se o dispositivo padrão mudar (fone conectado, por exemplo), a captura passa para o novo sozinha. Sem
+/// acesso ao microfone (privacidade do Windows), simplesmente não chega nada.
 /// </summary>
-internal sealed unsafe class LoopbackAudio : IDisposable
+internal sealed unsafe class AudioCapture : IDisposable
 {
     private static readonly TimeSpan DeviceCheckInterval = TimeSpan.FromSeconds(2);
 
+    private readonly bool _microphone;
     private readonly Thread _thread;
     private volatile bool _stop;
 
@@ -36,9 +39,16 @@ internal sealed unsafe class LoopbackAudio : IDisposable
 
     public ConcurrentQueue<AudioChunk> Chunks { get; } = new();
 
-    public LoopbackAudio()
+    /// <param name="microphone">Falso: o som do PC (loopback da saída padrão). Verdadeiro: o microfone padrão.</param>
+    public AudioCapture(bool microphone)
     {
-        _thread = new Thread(Run) { IsBackground = true, Name = "Gravação: áudio", Priority = ThreadPriority.AboveNormal };
+        _microphone = microphone;
+        _thread = new Thread(Run)
+        {
+            IsBackground = true,
+            Name = microphone ? "Gravação: microfone" : "Gravação: áudio",
+            Priority = ThreadPriority.AboveNormal,
+        };
         _thread.Start();
     }
 
@@ -77,7 +87,7 @@ internal sealed unsafe class LoopbackAudio : IDisposable
 
     private string? CurrentDefaultId()
     {
-        if (Wasapi.GetDefaultRenderEndpoint(_enumerator, out var device) < 0) return null;
+        if (Wasapi.GetDefaultEndpoint(_enumerator, _microphone, out var device) < 0) return null;
         var id = Wasapi.GetId(device);
         Com.Release(ref device);
         return id;
@@ -89,7 +99,7 @@ internal sealed unsafe class LoopbackAudio : IDisposable
         IntPtr device = IntPtr.Zero, format = IntPtr.Zero;
         try
         {
-            if (Wasapi.GetDefaultRenderEndpoint(_enumerator, out device) < 0) return;
+            if (Wasapi.GetDefaultEndpoint(_enumerator, _microphone, out device) < 0) return;
             _deviceId = Wasapi.GetId(device);
             if (Wasapi.Activate(device, Iid.AudioClient, out _client) < 0) return;
             if (Wasapi.GetMixFormat(_client, out format) < 0) return;
@@ -105,7 +115,8 @@ internal sealed unsafe class LoopbackAudio : IDisposable
             if (kind is not (1 or 3) || _channels < 1 || _rate < 8000) { Close(); return; }
 
             const long bufferDuration = 2_000_000; // 200 ms
-            if (Wasapi.Initialize(_client, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, bufferDuration, format) < 0
+            uint streamFlags = _microphone ? 0 : AUDCLNT_STREAMFLAGS_LOOPBACK;
+            if (Wasapi.Initialize(_client, AUDCLNT_SHAREMODE_SHARED, streamFlags, bufferDuration, format) < 0
                 || Wasapi.GetService(_client, Iid.AudioCaptureClient, out _capture) < 0
                 || Wasapi.Start(_client) < 0)
             {

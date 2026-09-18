@@ -63,13 +63,14 @@ esconder a área de trabalho, reagir à conexão de controles, atalhos rápidos 
 - **Atalhos no controle** (valem em qualquer janela, inclusive com um jogo na frente): segure por meio segundo
   **− e +** (Back + Start) para abrir a tela do console, **X + A** para ligar/desligar o mouse pelo analógico e
   **Y + B** para mostrar/esconder o teclado virtual. e **− + A** para começar/parar a gravação da tela. Cada um pode ser desligado na tela "Controle".
-- **Gravação da tela**: grava o monitor em que está o jogo, com o som do PC, em MP4 (H.264 + AAC), sem
-  programa extra: imagem pela Desktop Duplication do Windows, som pelo loopback do WASAPI e codificação pelo
+- **Gravação da tela**: grava o monitor em que está o jogo, com o som do PC e, se ligado, o microfone (para
+  narrar, misturado ao som do PC na mesma faixa), em MP4 (H.264 + AAC), sem programa extra: imagem pela Desktop
+  Duplication do Windows, som pelo WASAPI (loopback da saída e microfone padrão) e codificação pelo
   Media Foundation, que usa o encoder da placa de vídeo quando ele existe. Começa e para pelo cartão "Gravar a
   tela" da tela do console (que continua aberta, para escolher o jogo), pelo menu da bandeja, por **− + A** no
   controle ou por **Ctrl+Alt+R**. Antes de começar há uma contagem "3, 2, 1", que some antes do primeiro quadro
   (acionar de novo durante a contagem cancela); nenhum aviso aparece no vídeo. Arquivos em `VídeosMy Game Console` (a pasta, os quadros por segundo
-  — 30 ou 60 — e o som são configuráveis). Suspender o PC ou sair do app fecha o arquivo antes.
+  — 30 ou 60 —, o som do PC e o microfone são configuráveis). Suspender o PC ou sair do app fecha o arquivo antes.
 - **Atalhos personalizados**: lista de jogos/launchers/apps no menu (ex.: Playnite, Epic, emuladores).
 - **Energia**: suspender, hibernar, reiniciar e desligar (com confirmação). Na tela do console, "Suspender"
   oferece duas opções: suspender o PC (padrão) ou o **repouso de console**: apaga só a tela e, em notebooks

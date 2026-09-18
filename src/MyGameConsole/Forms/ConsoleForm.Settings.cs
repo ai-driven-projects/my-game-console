@@ -193,9 +193,13 @@ public sealed partial class ConsoleForm
 
         Header("Gravação da tela");
         Toggle("Gravar o som do PC",
-            "Junto com a imagem, grava o que sai nos alto-falantes ou no fone (o som do jogo, música, chamadas). " +
-            "O microfone não entra.",
+            "Junto com a imagem, grava o que sai nos alto-falantes ou no fone (o som do jogo, música, chamadas).",
             () => _settings.Current.RecordingCaptureAudio, v => SetSetting(s => s.RecordingCaptureAudio = v));
+        Toggle("Gravar o microfone",
+            "Grava também a sua voz pelo microfone padrão do Windows, misturada ao som do PC na mesma faixa, com ou sem " +
+            "jogo aberto. Com alto-falantes o microfone também capta o som do jogo (fica com eco); com fone não. " +
+            "Exige \"Permitir que aplicativos da área de trabalho acessem o microfone\" ligado nas configurações de privacidade do Windows.",
+            () => _settings.Current.RecordingCaptureMicrophone, v => SetSetting(s => s.RecordingCaptureMicrophone = v));
         _items.Add(new SettingItem
         {
             Title = "Quadros por segundo",

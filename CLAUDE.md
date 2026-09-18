@@ -62,8 +62,10 @@ Se `dotnet` não estiver no PATH da sessão, use `C:\Program Files\dotnet\dotnet
 - Os ícones dos cartões de baixo da tela do console ficam em `App/ConsoleIcons.cs`: badge redondo com o degradê
   do logo da Steam e símbolo branco sólido, vetorial (GraphicsPath). Um cartão novo ganha um ícone lá, no
   mesmo estilo, para continuar coerente com o logo da Steam ao lado.
-- Gravação da tela: `ScreenRecorderService` + `Services/Recording/` (Desktop Duplication → textura, loopback do
-  WASAPI → PCM 48 kHz, `Mp4Writer` com o Sink Writer do Media Foundation), tudo numa thread só, alinhado pelo QPC.
+- Gravação da tela: `ScreenRecorderService` + `Services/Recording/` (Desktop Duplication → textura, `AudioCapture`
+  do WASAPI → PCM 48 kHz, `Mp4Writer` com o Sink Writer do Media Foundation), tudo numa thread só, alinhado pelo QPC.
+  O som tem até duas capturas (loopback da saída e, opcional, o microfone), somadas numa faixa só no `Session`
+  pelo horário de cada trecho, com 200 ms de atraso para as duas chegarem antes de ir para o arquivo.
   As interfaces COM (DXGI, D3D11, MF, WASAPI) são chamadas pela vtable em `Native/NativeMethods.Media.cs`, sem RCW,
   para liberar texturas e amostras a cada quadro; os números dos slots seguem a ordem dos cabeçalhos do SDK
   (contando os 3 do IUnknown) — conferir antes de acrescentar um método. O encoder recebe a textura direto

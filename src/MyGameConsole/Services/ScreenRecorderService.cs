@@ -6,13 +6,14 @@ using static MyGameConsole.Native.NativeMethods;
 namespace MyGameConsole.Services;
 
 /// <summary>
-/// Gravação da tela com o som do PC em MP4 (H.264 + AAC), para registrar uma partida sem programa extra.
-/// Grava o monitor em que está a janela da frente (o jogo), na resolução dele, com o encoder da placa de vídeo
-/// quando houver. Os arquivos vão para <see cref="Folder"/> (padrão: Vídeos\My Game Console).
+/// Gravação da tela com o som do PC (e, se ligado, o microfone) em MP4 (H.264 + AAC), para registrar uma
+/// partida sem programa extra. Grava o monitor em que está a janela da frente (o jogo), na resolução dele, com o
+/// encoder da placa de vídeo quando houver. Os arquivos vão para <see cref="Folder"/> (padrão: Vídeos\My Game Console).
 ///
 /// Tudo roda numa thread própria: a imagem vem da Desktop Duplication (<see cref="DesktopDuplication"/>), o
-/// som do loopback do WASAPI (<see cref="LoopbackAudio"/>) e os dois vão para o <see cref="Mp4Writer"/> na
-/// mesma thread, intercalados pelo relógio (QPC) — é isso que mantém o som em sincronia com a imagem.
+/// som do WASAPI (<see cref="AudioCapture"/>: loopback da saída e microfone, misturados numa faixa só) e os dois
+/// vão para o <see cref="Mp4Writer"/> na mesma thread, intercalados pelo relógio (QPC) — é isso que mantém o som
+/// em sincronia com a imagem.
 /// Os quadros saem em ritmo constante (repetindo a imagem quando a tela está parada), o que todo player aceita.
 ///
 /// <see cref="StateChanged"/> chega sempre na thread da interface.
@@ -83,6 +84,7 @@ public sealed class ScreenRecorderService : IDisposable
                 path,
                 Math.Clamp(_settings.Current.RecordingFramerate, 15, 60),
                 _settings.Current.RecordingCaptureAudio,
+                _settings.Current.RecordingCaptureMicrophone,
                 NativeMethods.GetForegroundWindow());
 
             Exception? startError = null;
@@ -127,14 +129,17 @@ public sealed class ScreenRecorderService : IDisposable
         thread.Join(TimeSpan.FromSeconds(15));
     }
 
-    private sealed record Options(string Path, int Fps, bool Audio, IntPtr Window);
+    private sealed record Options(string Path, int Fps, bool SystemAudio, bool Microphone, IntPtr Window)
+    {
+        public bool Audio => SystemAudio || Microphone;
+    }
 
     private void Record(Options options, ManualResetEventSlim ready, Action<Exception> startFailed)
     {
         int coHr = CoInitializeEx(IntPtr.Zero, COINIT_MULTITHREADED);
         bool mfStarted = false;
         DesktopDuplication? screen = null;
-        LoopbackAudio? audio = null;
+        var audio = new List<AudioCapture>();
         Mp4Writer? writer = null;
         bool started = false;
 
@@ -144,7 +149,8 @@ public sealed class ScreenRecorderService : IDisposable
             mfStarted = true;
 
             screen = new DesktopDuplication(options.Window);
-            if (options.Audio) audio = new LoopbackAudio();
+            if (options.SystemAudio) audio.Add(new AudioCapture(microphone: false));
+            if (options.Microphone) audio.Add(new AudioCapture(microphone: true));
             writer = CreateWriter(options, screen, onGpu: screen.VideoSupport);
 
             var session = new Session(options.Fps, audio, Stopwatch.GetTimestamp());
@@ -184,7 +190,7 @@ public sealed class ScreenRecorderService : IDisposable
         }
         finally
         {
-            audio?.Dispose();
+            foreach (var capture in audio) capture.Dispose();
             writer?.Dispose();
             screen?.Dispose();
             if (mfStarted) MFShutdown();
@@ -233,22 +239,31 @@ public sealed class ScreenRecorderService : IDisposable
             frame++;
         }
 
-        session.PumpAudio(writer, Session.Now());
+        session.PumpAudio(writer, Session.Now(), final: true);
     }
 
-    /// <summary>Relógio da gravação e o áudio já gravado, para alinhar os trechos de som com a imagem.</summary>
-    private sealed class Session(int fps, LoopbackAudio? audio, long startTimestamp)
+    /// <summary>
+    /// Relógio da gravação e a mistura do som: os trechos de cada captura (som do PC, microfone) são somados numa
+    /// faixa só, cada um na posição do seu horário, e ela vai para o arquivo com um pequeno atraso — o tempo de
+    /// todas as capturas entregarem o mesmo instante.
+    /// </summary>
+    private sealed class Session(int fps, IReadOnlyList<AudioCapture> sources, long startTimestamp)
     {
         private const int Rate = Mp4Writer.AudioSampleRate;
         private const int Channels = Mp4Writer.AudioChannels;
-        /// <summary>O loopback entrega o som com uns poucos ms de atraso: o silêncio só é preenchido até essa margem.</summary>
-        private const long SilenceMarginFrames = Rate / 10;     // 100 ms
+        /// <summary>As capturas entregam o som com alguns ms de atraso: só vai para o arquivo o que é mais velho que isso.</summary>
+        private const long MixDelayFrames = Rate / 5;           // 200 ms
         private const long GapToleranceFrames = Rate / 50;      // 20 ms
         private const long OverlapToleranceFrames = Rate / 10;  // 100 ms
+        /// <summary>Trecho com horário muito à frente (relógio estranho do dispositivo) é descartado.</summary>
+        private const long MaxAheadFrames = Rate * 5;
 
-        private static readonly short[] Silence = new short[Rate / 10 * Channels];
+        private readonly long[] _cursors = CreateCursors(sources.Count);
+        private readonly short[] _output = new short[Rate / 10 * Channels];
 
-        private long _audioFrames; // amostras (por canal) já gravadas
+        private int[] _mix = new int[Rate / 2 * Channels]; // soma das capturas, a partir de _audioFrames
+        private long _mixedFrames;                         // até onde há som somado em _mix
+        private long _audioFrames;                         // amostras (por canal) já gravadas
 
         public long StartTimestamp { get; } = startTimestamp;
         public long StartTime { get; } = ToHundredNs(startTimestamp);
@@ -259,56 +274,102 @@ public sealed class ScreenRecorderService : IDisposable
         private static long ToHundredNs(long timestamp) =>
             (long)(timestamp * (10_000_000.0 / Stopwatch.Frequency));
 
+        private static long[] CreateCursors(int count)
+        {
+            var cursors = new long[count];
+            Array.Fill(cursors, -1);
+            return cursors;
+        }
+
         private long FramesAt(long time) => (time - StartTime) * Rate / 10_000_000;
 
         /// <summary>
-        /// Grava o som que chegou até agora. Os trechos entram um atrás do outro; buracos (nada tocando) viram
-        /// silêncio e sobreposições grandes são cortadas, então o som nunca se afasta da imagem.
+        /// Mistura o som que chegou e grava o que já está completo. Buracos (nada tocando, sem microfone) viram
+        /// silêncio e o que chega atrasado demais é cortado, então o som nunca se afasta da imagem.
+        /// <paramref name="final"/> grava tudo até <paramref name="now"/>, sem esperar as capturas.
         /// </summary>
-        public void PumpAudio(Mp4Writer writer, long now)
+        public void PumpAudio(Mp4Writer writer, long now, bool final = false)
         {
             if (!writer.HasAudio) return;
 
-            while (audio is not null && audio.Chunks.TryDequeue(out var chunk))
+            for (int s = 0; s < sources.Count; s++)
             {
-                long start = FramesAt(chunk.Time);
-                ReadOnlySpan<short> samples = chunk.Samples;
-
-                if (start > _audioFrames + GapToleranceFrames)
-                {
-                    WriteSilence(writer, start - _audioFrames);
-                }
-                else if (start < _audioFrames - OverlapToleranceFrames)
-                {
-                    long skip = _audioFrames - start;
-                    if (skip * Channels >= samples.Length) continue;
-                    samples = samples[(int)(skip * Channels)..];
-                }
-
-                Write(writer, samples);
+                while (sources[s].Chunks.TryDequeue(out var chunk)) Mix(s, chunk);
             }
 
-            // Nada tocando (ou sem captura de áudio): silêncio até perto de agora.
-            long expected = FramesAt(now) - SilenceMarginFrames;
-            if (expected > _audioFrames) WriteSilence(writer, expected - _audioFrames);
+            long expected = FramesAt(now) - (final ? 0 : MixDelayFrames);
+            if (expected > _audioFrames) Flush(writer, expected - _audioFrames);
         }
 
-        private void WriteSilence(Mp4Writer writer, long frames)
+        private void Mix(int source, AudioChunk chunk)
+        {
+            long start = FramesAt(chunk.Time);
+            ReadOnlySpan<short> samples = chunk.Samples;
+
+            // O horário de cada pacote varia uns ms: trechos seguidos da mesma captura entram colados ao anterior,
+            // e uma sobreposição grande (a mesma captura repetindo um instante) é cortada.
+            long cursor = _cursors[source];
+            if (cursor >= 0 && start < cursor - OverlapToleranceFrames)
+            {
+                long skip = cursor - start;
+                if (skip * Channels >= samples.Length) return;
+                samples = samples[(int)(skip * Channels)..];
+                start = cursor;
+            }
+            else if (cursor >= 0 && start <= cursor + GapToleranceFrames)
+            {
+                start = cursor;
+            }
+
+            _cursors[source] = start + samples.Length / Channels;
+
+            // O que cai antes do já gravado chegou tarde demais.
+            if (start < _audioFrames)
+            {
+                long skip = _audioFrames - start;
+                if (skip * Channels >= samples.Length) return;
+                samples = samples[(int)(skip * Channels)..];
+                start = _audioFrames;
+            }
+
+            long offset = start - _audioFrames;
+            long frames = samples.Length / Channels;
+            if (offset + frames > MaxAheadFrames) return;
+
+            int begin = (int)(offset * Channels);
+            int end = begin + samples.Length;
+            if (end > _mix.Length) Array.Resize(ref _mix, Math.Max(end, _mix.Length * 2));
+            for (int i = 0; i < samples.Length; i++) _mix[begin + i] += samples[i];
+
+            _mixedFrames = Math.Max(_mixedFrames, start + frames);
+        }
+
+        /// <summary>Grava os próximos <paramref name="frames"/> da mistura (silêncio onde não há som) e os tira dela.</summary>
+        private void Flush(Mp4Writer writer, long frames)
         {
             while (frames > 0)
             {
-                int n = (int)Math.Min(frames, Silence.Length / Channels);
-                Write(writer, Silence.AsSpan(0, n * Channels));
+                int n = (int)Math.Min(frames, _output.Length / Channels);
+                int count = n * Channels;
+                int used = (int)Math.Clamp((_mixedFrames - _audioFrames) * Channels, 0, _mix.Length);
+
+                for (int i = 0; i < count; i++)
+                {
+                    _output[i] = i < used ? (short)Math.Clamp(_mix[i], short.MinValue, short.MaxValue) : (short)0;
+                }
+
+                // Desloca o resto da mistura para o começo.
+                int left = Math.Max(0, used - count);
+                if (left > 0) Array.Copy(_mix, count, _mix, 0, left);
+                Array.Clear(_mix, left, used - left);
+
+                writer.WriteAudio(_output.AsSpan(0, count), _audioFrames * 10_000_000 / Rate);
+                _audioFrames += n;
                 frames -= n;
             }
         }
-
-        private void Write(Mp4Writer writer, ReadOnlySpan<short> samples)
-        {
-            writer.WriteAudio(samples, _audioFrames * 10_000_000 / Rate);
-            _audioFrames += samples.Length / Channels;
-        }
     }
+
 
     private static void TryDelete(string path)
     {

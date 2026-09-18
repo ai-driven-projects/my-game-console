@@ -100,6 +100,9 @@ public sealed class AppSettings
     /// <summary>Gravar também o som do PC (o que sai nos alto-falantes ou no fone).</summary>
     public bool RecordingCaptureAudio { get; set; } = true;
 
+    /// <summary>Gravar também o microfone padrão (narração), misturado ao som do PC na mesma faixa.</summary>
+    public bool RecordingCaptureMicrophone { get; set; }
+
     /// <summary>Quadros por segundo da gravação: 30 ou 60.</summary>
     public int RecordingFramerate { get; set; } = 60;
 

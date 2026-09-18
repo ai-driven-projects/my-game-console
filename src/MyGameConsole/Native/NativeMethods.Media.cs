@@ -435,11 +435,14 @@ internal static unsafe partial class NativeMethods
 
     internal static class Wasapi
     {
-        /// <summary>IMMDeviceEnumerator::GetDefaultAudioEndpoint (saída de som padrão, papel "console").</summary>
-        public static int GetDefaultRenderEndpoint(IntPtr enumerator, out IntPtr device)
+        /// <summary>
+        /// IMMDeviceEnumerator::GetDefaultAudioEndpoint, papel "console": a saída de som padrão
+        /// (<paramref name="capture"/> falso) ou o microfone padrão.
+        /// </summary>
+        public static int GetDefaultEndpoint(IntPtr enumerator, bool capture, out IntPtr device)
         {
             IntPtr d;
-            int hr = ((delegate* unmanaged[Stdcall]<IntPtr, int, int, IntPtr*, int>)Slot(enumerator, 4))(enumerator, 0, 0, &d);
+            int hr = ((delegate* unmanaged[Stdcall]<IntPtr, int, int, IntPtr*, int>)Slot(enumerator, 4))(enumerator, capture ? 1 : 0, 0, &d);
             device = d;
             return hr;
         }
