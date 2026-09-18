@@ -27,17 +27,19 @@ public sealed class ToastForm : Form
     private string _glyph = string.Empty;
     private Color _accent = Theme.Accent;
     private bool _crossed;
+    private bool _glyphIsText;
     private float _u = 10f;
     private DateTime _fadeAt;
 
     /// <summary>
     /// Mostra o aviso (trocando o que estiver na tela). <paramref name="crossed"/> risca o ícone,
-    /// para "desligado" ficar diferente de "ligado" sem depender só da cor.
+    /// para "desligado" ficar diferente de "ligado" sem depender só da cor. Com <paramref name="glyphIsText"/>, o
+    /// ícone é um texto curto em negrito (ex.: o número da contagem antes de gravar).
     /// </summary>
-    public static void Show(string text, string glyph, Color accent, bool crossed = false)
+    public static void Show(string text, string glyph, Color accent, bool crossed = false, bool glyphIsText = false)
     {
         if (_instance is null || _instance.IsDisposed) _instance = new ToastForm();
-        _instance.Present(text, glyph, accent, crossed);
+        _instance.Present(text, glyph, accent, crossed, glyphIsText);
     }
 
     /// <summary>Tira o aviso da tela e descarta a janela (usado ao sair do app).</summary>
@@ -63,9 +65,10 @@ public sealed class ToastForm : Form
         _timer.Tick += (_, _) => Fade();
     }
 
-    private void Present(string text, string glyph, Color accent, bool crossed)
+    private void Present(string text, string glyph, Color accent, bool crossed, bool glyphIsText)
     {
         _text = text;
+        _glyphIsText = glyphIsText;
         _glyph = glyph;
         _accent = accent;
         _crossed = crossed;
@@ -107,6 +110,13 @@ public sealed class ToastForm : Form
     private float IconSize => _u * 5f;
 
     private Font TextFont() => new("Segoe UI", _u * 2.2f, FontStyle.Regular, GraphicsUnit.Pixel);
+
+    /// <summary>O aviso aparece na tela, mas não em capturas: não entra nas gravações do app nem em prints.</summary>
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        NativeMethods.SetWindowDisplayAffinity(Handle, NativeMethods.WDA_EXCLUDEFROMCAPTURE);
+    }
 
     /// <summary>Não ativar a janela ao mostrá-la: o foco continua onde estava.</summary>
     protected override bool ShowWithoutActivation => true;
@@ -161,12 +171,12 @@ public sealed class ToastForm : Form
         float d = IconSize;
         var icon = new RectangleF(_u * 3f - d * 0.15f, (Height - d) / 2f, d, d);
         using (var iconBrush = new SolidBrush(_accent))
-        using (var glyphFont = new Font(Theme.IconFontName, d * 0.62f, GraphicsUnit.Pixel))
         using (var glyphBrush = new SolidBrush(Theme.BgTop))
         {
-            var center = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
             g.FillEllipse(iconBrush, icon);
-            g.DrawString(_glyph, glyphFont, glyphBrush, icon, center);
+            // Centrado pelo desenho: centrado pela caixa da fonte, o glifo saía deslocado dentro do círculo.
+            if (_glyphIsText) InkText.DrawCentered(g, _glyph, "Segoe UI", FontStyle.Bold, d * 0.62f, glyphBrush, icon);
+            else InkText.DrawCentered(g, _glyph, Theme.IconFontName, FontStyle.Regular, d * 0.5f, glyphBrush, icon);
 
             if (_crossed)
             {

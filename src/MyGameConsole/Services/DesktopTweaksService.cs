@@ -125,42 +125,77 @@ public sealed class DesktopTweaksService
     public bool AreSetupPromptsDisabled => GetSetupPrompts().Values.All(v => v == 0);
 
     /// <summary>Valor atual de cada ajuste. Nulo = valor ausente (o Windows usa o padrão, que é mostrar a tela).</summary>
-    public Dictionary<string, int?> GetSetupPrompts()
+    public Dictionary<string, int?> GetSetupPrompts() => GetDwords(SetupPromptValues);
+
+    public void SetSetupPromptsDisabled() => SetDwords(SetupPromptValues, 0);
+
+    /// <summary>Devolve os valores originais; os que não existiam antes são apagados.</summary>
+    public void RestoreSetupPrompts(Dictionary<string, int?> original) => RestoreDwords(SetupPromptValues, original);
+
+    // ------------------------------------------------------------------
+    // Atraso dos apps de inicialização
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// O Windows segura de propósito os apps da chave Run por alguns segundos depois do logon (e, no Windows 11,
+    /// espera o sistema ficar ocioso). Com os dois valores em 0, o app (e o que mais iniciar com o Windows) abre
+    /// assim que a área de trabalho carrega. Ajuste do usuário, sem administrador.
+    /// </summary>
+    private static readonly string[] StartupDelayValues =
+    [
+        @"Explorer\Serialize\StartupDelayInMSec",
+        @"Explorer\Serialize\WaitForIdleState",
+    ];
+
+    /// <summary>Verdadeiro se o Windows não atrasa mais os apps de inicialização.</summary>
+    public bool IsStartupDelayDisabled => GetStartupDelay().Values.All(v => v == 0);
+
+    public Dictionary<string, int?> GetStartupDelay() => GetDwords(StartupDelayValues);
+
+    public void SetStartupDelayDisabled() => SetDwords(StartupDelayValues, 0);
+
+    public void RestoreStartupDelay(Dictionary<string, int?> original) => RestoreDwords(StartupDelayValues, original);
+
+    // ------------------------------------------------------------------
+    // Valores DWORD em HKCU\...\CurrentVersion (ler, gravar e devolver o original)
+    // ------------------------------------------------------------------
+
+    private static Dictionary<string, int?> GetDwords(string[] entries)
     {
         var result = new Dictionary<string, int?>();
-        foreach (var entry in SetupPromptValues)
+        foreach (var entry in entries)
         {
-            var (subKey, name) = SplitSetupPrompt(entry);
+            var (subKey, name) = SplitEntry(entry);
             using var key = Registry.CurrentUser.OpenSubKey(subKey);
             result[entry] = key?.GetValue(name) is int v ? v : null;
         }
         return result;
     }
 
-    public void SetSetupPromptsDisabled()
+    private static void SetDwords(string[] entries, int value)
     {
-        foreach (var entry in SetupPromptValues)
+        foreach (var entry in entries)
         {
-            var (subKey, name) = SplitSetupPrompt(entry);
+            var (subKey, name) = SplitEntry(entry);
             using var key = Registry.CurrentUser.CreateSubKey(subKey);
-            if (key.GetValue(name) is not 0) key.SetValue(name, 0, RegistryValueKind.DWord);
+            if (key.GetValue(name) is not int current || current != value) key.SetValue(name, value, RegistryValueKind.DWord);
         }
     }
 
     /// <summary>Devolve os valores originais; os que não existiam antes são apagados.</summary>
-    public void RestoreSetupPrompts(Dictionary<string, int?> original)
+    private static void RestoreDwords(string[] entries, Dictionary<string, int?> original)
     {
         foreach (var (entry, value) in original)
         {
-            if (!SetupPromptValues.Contains(entry)) continue;
-            var (subKey, name) = SplitSetupPrompt(entry);
+            if (!entries.Contains(entry)) continue;
+            var (subKey, name) = SplitEntry(entry);
             using var key = Registry.CurrentUser.CreateSubKey(subKey);
             if (value is { } v) key.SetValue(name, v, RegistryValueKind.DWord);
             else key.DeleteValue(name, throwOnMissingValue: false);
         }
     }
 
-    private static (string SubKey, string Name) SplitSetupPrompt(string entry)
+    private static (string SubKey, string Name) SplitEntry(string entry)
     {
         int i = entry.LastIndexOf('\\');
         return (CurrentVersionKey + @"\" + entry[..i], entry[(i + 1)..]);

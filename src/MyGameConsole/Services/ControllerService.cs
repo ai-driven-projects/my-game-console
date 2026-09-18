@@ -77,6 +77,63 @@ public sealed class ControllerService : IDisposable
         }
     }
 
+    /// <summary>A leitura das baterias percorre dispositivos do Windows: guarda por um tempo (o nível muda devagar).</summary>
+    private static readonly TimeSpan BatteryCache = TimeSpan.FromSeconds(20);
+
+    private List<ControllerBattery> _batteries = [];
+    private DateTime _batteriesAt;
+    private int _batteriesCount = -1;
+
+    /// <summary>
+    /// Bateria de cada controle conectado, para o cabeçalho da tela do console. XInput informa o nível em quatro
+    /// faixas (convertidas em porcentagem aproximada) ou "com fio"; controles HID por Bluetooth, a porcentagem que o
+    /// Windows mostra em Configurações > Bluetooth. Nulo quando o controle não informa.
+    /// </summary>
+    public IReadOnlyList<ControllerBattery> ReadBatteries()
+    {
+        var now = DateTime.UtcNow;
+        if (now - _batteriesAt < BatteryCache && _batteriesCount == ConnectedCount) return _batteries;
+
+        var list = new List<ControllerBattery>();
+        for (uint i = 0; i < MaxXInputControllers && _xinputAvailable; i++)
+        {
+            if (!_xinputConnected[i]) continue;
+            try
+            {
+                if (NativeMethods.XInputGetBatteryInformation(i, NativeMethods.BATTERY_DEVTYPE_GAMEPAD, out var info) != NativeMethods.ERROR_SUCCESS
+                    || info.BatteryType is NativeMethods.BATTERY_TYPE_DISCONNECTED or NativeMethods.BATTERY_TYPE_UNKNOWN)
+                {
+                    list.Add(new ControllerBattery(null, Wired: false));
+                }
+                else if (info.BatteryType == NativeMethods.BATTERY_TYPE_WIRED)
+                {
+                    list.Add(new ControllerBattery(null, Wired: true));
+                }
+                else
+                {
+                    list.Add(new ControllerBattery(info.BatteryLevel switch { 0 => 5, 1 => 30, 2 => 65, _ => 100 }, Wired: false));
+                }
+            }
+            catch (EntryPointNotFoundException)
+            {
+                list.Add(new ControllerBattery(null, Wired: false));
+            }
+        }
+
+        foreach (var device in _hid.Devices)
+        {
+            int? percent = null;
+            try { percent = BluetoothBattery.Read(device.Path); }
+            catch { /* sem leitura: fica sem porcentagem */ }
+            list.Add(new ControllerBattery(percent, Wired: false));
+        }
+
+        _batteries = list;
+        _batteriesAt = now;
+        _batteriesCount = ConnectedCount;
+        return list;
+    }
+
     /// <summary>Estado atual de cada controle conectado, já normalizado.</summary>
     public IEnumerable<GamepadState> ReadStates()
     {

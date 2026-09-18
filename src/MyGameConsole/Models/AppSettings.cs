@@ -5,8 +5,11 @@ namespace MyGameConsole.Models;
 /// </summary>
 public sealed class AppSettings
 {
-    /// <summary>Registrar o app para iniciar junto com o Windows.</summary>
-    public bool StartWithWindows { get; set; }
+    /// <summary>
+    /// Registrar o app para iniciar junto com o Windows. Ligado por padrão: o app é a porta de entrada do PC em modo
+    /// console, e sem ele no boot a tela do console não abre sozinha.
+    /// </summary>
+    public bool StartWithWindows { get; set; } = true;
 
     /// <summary>
     /// Iniciar como administrador (tarefa agendada no logon, em vez da chave Run). Necessário para
@@ -17,8 +20,11 @@ public sealed class AppSettings
     /// <summary>Abrir o Steam Big Picture assim que o app iniciar.</summary>
     public bool OpenBigPictureOnStart { get; set; }
 
-    /// <summary>Abrir a tela do console (launcher em tela cheia) assim que o app iniciar.</summary>
-    public bool OpenLauncherOnStart { get; set; }
+    /// <summary>
+    /// Abrir a tela do console (launcher em tela cheia) assim que o app iniciar. Ligado por padrão: ao ligar o PC, a
+    /// primeira coisa que aparece é o console, navegável pelo controle.
+    /// </summary>
+    public bool OpenLauncherOnStart { get; set; } = true;
 
     /// <summary>Abrir o Big Picture automaticamente quando um controle for conectado.</summary>
     public bool OpenBigPictureOnControllerConnect { get; set; }
@@ -82,6 +88,25 @@ public sealed class AppSettings
     public bool ToggleKeyboardWithControllerCombo { get; set; } = true;
 
     // ------------------------------------------------------------------
+    // Gravação da tela
+    // ------------------------------------------------------------------
+
+    /// <summary>Começar e parar a gravação da tela segurando − + A no controle.</summary>
+    public bool ToggleRecordingWithControllerCombo { get; set; } = true;
+
+    /// <summary>Atalho global que começa e para a gravação. Ex.: "Ctrl+Alt+R". Vazio desativa.</summary>
+    public string? RecordingHotkey { get; set; } = "Ctrl+Alt+R";
+
+    /// <summary>Gravar também o som do PC (o que sai nos alto-falantes ou no fone).</summary>
+    public bool RecordingCaptureAudio { get; set; } = true;
+
+    /// <summary>Quadros por segundo da gravação: 30 ou 60.</summary>
+    public int RecordingFramerate { get; set; } = 60;
+
+    /// <summary>Pasta das gravações. Vazio usa Vídeos\My Game Console.</summary>
+    public string? RecordingFolder { get; set; }
+
+    // ------------------------------------------------------------------
     // Modo Game (persistente entre reinicializações)
     // ------------------------------------------------------------------
 
@@ -109,6 +134,19 @@ public sealed class AppSettings
     /// boas-vindas após atualizações (ajustes do usuário, sem administrador).
     /// </summary>
     public bool GameModeHideSetupPrompts { get; set; } = true;
+
+    /// <summary>
+    /// Modo Game: o PC entra direto na tela do console ao ligar, como um console. O app abre a tela do console antes
+    /// de tudo (ela cobre a área de trabalho enquanto o Windows termina de carregar) e tira os atrasos de inicialização:
+    /// o do Windows para os apps de inicialização (sem administrador) e o da tarefa agendada do app (UAC uma vez).
+    /// </summary>
+    public bool GameModeBootToConsole { get; set; } = true;
+
+    /// <summary>
+    /// Modo Game: tela de bloqueio e de entrada com o papel de parede do console. É um ajuste do computador
+    /// (HKLM), por isso gravar pede o UAC uma vez, como a senha ao acordar.
+    /// </summary>
+    public bool GameModeLockScreen { get; set; } = true;
 
     /// <summary>Papel de parede personalizado do Modo Game. Vazio usa o papel padrão que vem com o app (wallpaper.webp).</summary>
     public string? GameModeWallpaperPath { get; set; }
@@ -160,6 +198,16 @@ public sealed class DesktopStateSnapshot
     /// Nulo em backups antigos: é preenchido na primeira reaplicação, antes de mexer no ajuste.
     /// </summary>
     public Dictionary<string, int?>? SetupPrompts { get; set; }
+    /// <summary>
+    /// Valores originais do atraso do Windows para os apps de inicialização (nulo no valor = não existia).
+    /// Nulo em backups antigos: é preenchido na primeira reaplicação, antes de mexer no ajuste.
+    /// </summary>
+    public Dictionary<string, int?>? StartupDelay { get; set; }
+    /// <summary>
+    /// Valores originais da imagem da tela de bloqueio definida para o computador (nulo no valor = não existia).
+    /// Nulo em backups antigos: é preenchido na primeira reaplicação, antes de mexer no ajuste.
+    /// </summary>
+    public Dictionary<string, string?>? LockScreen { get; set; }
 }
 
 /// <summary>"Exigir senha ao acordar" de um plano de energia, na tomada e na bateria.</summary>

@@ -52,6 +52,7 @@ public sealed partial class ConsoleForm
     private string _captureTitle = string.Empty;
     private string _captureHint = string.Empty;
     private Action<int>? _captureHidTarget;
+    private Action<string?>? _captureHotkeyTarget;
     private bool _captureArmed;
     private DateTime _captureUntil;
 
@@ -144,7 +145,7 @@ public sealed partial class ConsoleForm
             Description = "Pressione A e, em seguida, a combinação no teclado (ex.: Ctrl+Alt+G). " +
                           "Use Ctrl, Alt ou Shift com uma tecla, ou F1 a F24. Backspace desativa.",
             Value = () => string.IsNullOrWhiteSpace(_settings.Current.LauncherHotkey) ? "Desativada" : _settings.Current.LauncherHotkey!,
-            OnSelect = StartHotkeyCapture,
+            OnSelect = () => StartHotkeyCapture(v => SetSetting(s => s.LauncherHotkey = v)),
         });
 
         Header("Modo Console");
@@ -174,6 +175,13 @@ public sealed partial class ConsoleForm
         Toggle("Sem a tela de concluir a configuração",
             "O Windows deixa de abrir a tela cheia \"Vamos concluir a configuração do seu dispositivo\" e a de boas-vindas após atualizações.",
             () => _settings.Current.GameModeHideSetupPrompts, v => SetSetting(s => s.GameModeHideSetupPrompts = v));
+        Toggle("Entrar direto no console ao ligar o PC",
+            "Ao ligar o PC, esta tela abre antes de tudo, cobrindo a área de trabalho, pronta para o controle. O app também tira " +
+            "os atrasos de inicialização do Windows e da tarefa de administrador (recriá-la pede o UAC uma vez).",
+            () => _settings.Current.GameModeBootToConsole, v => SetSetting(s => s.GameModeBootToConsole = v));
+        Toggle("Tela de bloqueio com o papel de parede do console",
+            "A tela de bloqueio e a de entrada usam a mesma imagem do papel de parede do Modo Game. Gravar pede o UAC uma vez.",
+            () => _settings.Current.GameModeLockScreen, v => SetSetting(s => s.GameModeLockScreen = v));
         _items.Add(new SettingItem
         {
             Title = "Imagem do papel de parede",
@@ -181,6 +189,42 @@ public sealed partial class ConsoleForm
             Value = () => string.IsNullOrWhiteSpace(_settings.Current.GameModeWallpaperPath) ? "Padrão do app" : SafeFileName(_settings.Current.GameModeWallpaperPath!),
             OnSelect = BrowseWallpaper,
             OnAdjust = dx => { if (dx < 0 && _settings.Current.GameModeWallpaperPath is not null) SetSetting(s => s.GameModeWallpaperPath = null); },
+        });
+
+        Header("Gravação da tela");
+        Toggle("Gravar o som do PC",
+            "Junto com a imagem, grava o que sai nos alto-falantes ou no fone (o som do jogo, música, chamadas). " +
+            "O microfone não entra.",
+            () => _settings.Current.RecordingCaptureAudio, v => SetSetting(s => s.RecordingCaptureAudio = v));
+        _items.Add(new SettingItem
+        {
+            Title = "Quadros por segundo",
+            Description = "60 deixa o movimento dos jogos mais fluido; 30 gera arquivos menores e pesa menos em PCs mais fracos. " +
+                          "A gravação usa o encoder de vídeo da placa quando ele existe. A ou ◀ ▶ alterna.",
+            Value = () => $"{(_settings.Current.RecordingFramerate >= 60 ? 60 : 30)} fps",
+            OnSelect = () => SetSetting(s => s.RecordingFramerate = s.RecordingFramerate >= 60 ? 30 : 60),
+            OnAdjust = dx => SetSetting(s => s.RecordingFramerate = dx > 0 ? 60 : 30),
+        });
+        Toggle("Começar e parar segurando − e A no controle",
+            "Segure Back + A (− e A no 8BitDo, View + A no Xbox) por 1,5 segundo, em qualquer janela, até com o jogo na frente. " +
+            "O tempo é maior que o dos outros atalhos para não começar a gravar sem querer ao navegar pelo Big Picture.",
+            () => _settings.Current.ToggleRecordingWithControllerCombo, v => SetSetting(s => s.ToggleRecordingWithControllerCombo = v));
+        _items.Add(new SettingItem
+        {
+            Title = "Tecla de atalho da gravação",
+            Description = "Começa e para a gravação de qualquer janela. Pressione A e, em seguida, a combinação no teclado " +
+                          "(ex.: Ctrl+Alt+R). Use Ctrl, Alt ou Shift com uma tecla, ou F1 a F24. Backspace desativa.",
+            Value = () => string.IsNullOrWhiteSpace(_settings.Current.RecordingHotkey) ? "Desativada" : _settings.Current.RecordingHotkey!,
+            OnSelect = () => StartHotkeyCapture(v => SetSetting(s => s.RecordingHotkey = v)),
+        });
+        _items.Add(new SettingItem
+        {
+            Title = "Pasta das gravações",
+            Description = "Onde os vídeos (MP4) são salvos. A escolhe outra pasta (abre o seletor do Windows). ◀ volta à pasta padrão, " +
+                          "Vídeos\\My Game Console.",
+            Value = () => _recorder.Folder,
+            OnSelect = BrowseRecordingFolder,
+            OnAdjust = dx => { if (dx < 0 && _settings.Current.RecordingFolder is not null) SetSetting(s => s.RecordingFolder = null); },
         });
 
         Header("Controle");
@@ -488,9 +532,11 @@ public sealed partial class ConsoleForm
     // Captura de tecla de atalho e de botão HID
     // ------------------------------------------------------------------
 
-    private void StartHotkeyCapture()
+    /// <summary>Captura uma combinação de teclas e a entrega a <paramref name="assign"/> (nulo = desativar).</summary>
+    private void StartHotkeyCapture(Action<string?> assign)
     {
         _capture = CaptureKind.Hotkey;
+        _captureHotkeyTarget = assign;
         _captureTitle = "Pressione a combinação de teclas no teclado";
         _captureHint = "Ctrl, Alt ou Shift + tecla, ou F1 a F24   ·   Backspace desativa   ·   Esc cancela";
         _captureUntil = DateTime.UtcNow + CaptureTimeout;
@@ -519,6 +565,7 @@ public sealed partial class ConsoleForm
         if (_capture == CaptureKind.None) return;
         _capture = CaptureKind.None;
         _captureHidTarget = null;
+        _captureHotkeyTarget = null;
         _captureArmed = false;
         _prevButtons = GamepadButtons.All; // o botão ainda pode estar pressionado; não deve virar A/B
         Invalidate();
@@ -537,8 +584,9 @@ public sealed partial class ConsoleForm
 
         if (e.KeyCode is Keys.Back or Keys.Delete)
         {
-            SetSetting(s => s.LauncherHotkey = null);
+            var clear = _captureHotkeyTarget;
             CloseCapture();
+            clear?.Invoke(null);
             ShowNotice("Tecla de atalho desativada.");
             return;
         }
@@ -552,8 +600,9 @@ public sealed partial class ConsoleForm
             return;
         }
 
-        SetSetting(s => s.LauncherHotkey = text);
+        var assign = _captureHotkeyTarget;
         CloseCapture();
+        assign?.Invoke(text);
         ShowNotice($"Tecla de atalho: {text}");
     }
 
@@ -607,6 +656,22 @@ public sealed partial class ConsoleForm
         if (dlg.ShowDialog(this) == DialogResult.OK)
         {
             SetSetting(s => s.SteamPathOverride = dlg.SelectedPath);
+        }
+
+        Activate();
+    }
+
+    private void BrowseRecordingFolder()
+    {
+        using var dlg = new FolderBrowserDialog
+        {
+            Description = "Selecione a pasta onde as gravações da tela serão salvas",
+            UseDescriptionForTitle = true,
+            SelectedPath = _recorder.Folder,
+        };
+        if (dlg.ShowDialog(this) == DialogResult.OK)
+        {
+            SetSetting(s => s.RecordingFolder = dlg.SelectedPath);
         }
 
         Activate();

@@ -24,15 +24,20 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly KeyboardBacklightService _backlight = new();
     private readonly StartupService _startup = new();
     private readonly DesktopTweaksService _tweaks = new();
+    private readonly LockScreenService _lockScreen = new();
     private readonly ConsoleModeService _consoleMode;
     private readonly GameModeService _gameMode;
     private readonly HotkeyService _hotkey = new();
+    private readonly HotkeyService _recordHotkey = new();
     private readonly ControllerComboService _controllerCombo;
     private readonly ControllerMouseService _mouse;
     private readonly VirtualKeyboardService _keyboard;
     private readonly UpdateService _updates = new();
+    private readonly ScreenRecorderService _recorder;
 
     private readonly NotifyIcon _tray;
+    private readonly Icon _appIcon;
+    private Icon? _recordingIcon;
     private readonly ContextMenuStrip _menu = new();
     private readonly System.Windows.Forms.Timer _pollTimer;
     private readonly System.Windows.Forms.Timer _updateCheckTimer;
@@ -49,14 +54,16 @@ public sealed class TrayApplicationContext : ApplicationContext
         _steam = new SteamService(_settings);
         _library = new SteamLibraryService(_steam);
         _consoleMode = new ConsoleModeService(_settings, _shell, _steam);
-        _gameMode = new GameModeService(_settings, _tweaks, _power);
+        _gameMode = new GameModeService(_settings, _tweaks, _power, _startup, _lockScreen);
         _controllerCombo = new ControllerComboService(_controllers);
         _mouse = new ControllerMouseService(_settings, _controllers);
         _keyboard = new VirtualKeyboardService(_settings);
+        _recorder = new ScreenRecorderService(_settings);
 
+        _appIcon = LoadAppIcon();
         _tray = new NotifyIcon
         {
-            Icon = LoadAppIcon(),
+            Icon = _appIcon,
             Text = AppTitle,
             Visible = true,
             ContextMenuStrip = _menu,
@@ -73,6 +80,10 @@ public sealed class TrayApplicationContext : ApplicationContext
         _hotkey.Pressed += (_, _) => Safe(ShowConsole);
         _controllerCombo.Triggered += (_, combo) => OnControllerComboTriggered(combo);
         _mouse.StateChanged += (_, _) => OnMouseStateChanged();
+        _recordHotkey.Pressed += (_, _) => ToggleRecording();
+        _recorder.StateChanged += (_, _) => OnRecordingStateChanged();
+        // Suspender no meio de uma gravação a deixaria horas parada na mesma imagem: fecha o arquivo antes.
+        Microsoft.Win32.SystemEvents.PowerModeChanged += OnPowerModeChanged;
 
         _pollTimer = new System.Windows.Forms.Timer { Interval = 2000 };
         _pollTimer.Tick += (_, _) => Poll();
@@ -89,27 +100,61 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         Application.ApplicationExit += (_, _) => OnAppExit();
 
+        // Entrar direto no console: a tela abre antes de todo o resto e cobre a área de trabalho enquanto o
+        // Windows termina de carregar. Quem liga o PC vai do "Bem-vindo" direto para o console.
+        if (_settings.Current.OpenLauncherOnStart || _gameMode.BootsToConsole)
+        {
+            Safe(ShowConsole);
+        }
+
         SyncStartupRegistration();
         RegisterHotkey();
+        RegisterRecordingHotkey();
         SyncControllerFeatures();
         Poll();
 
         // Modo Game é persistente: reaplica os ajustes a cada início (inclusive após reiniciar o PC),
         // sem pedir UAC: o que exigir administrador aparece como pendente no checklist da tela do console.
-        Safe(() => _gameMode.ReapplyIfEnabled(interactive: false));
+        // No boot o app pode abrir antes da barra de tarefas (que alguns ajustes usam): espera por ela.
+        ReapplyGameModeWhenShellReady();
 
         if (_settings.Current.OpenBigPictureOnStart)
         {
             Safe(_steam.OpenBigPicture);
         }
 
-        if (_settings.Current.OpenLauncherOnStart)
-        {
-            Safe(ShowConsole);
-        }
-
         // Início silencioso: nenhum balão na bandeja. As formas de abrir a tela do console
         // (tecla de atalho e gesto do controle) aparecem no menu e na dica do item "Abrir tela do console".
+    }
+
+    /// <summary>Tempo máximo esperando a barra de tarefas no boot (no Modo Console ela nem existe).</summary>
+    private static readonly TimeSpan ShellWaitLimit = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Reaplica o Modo Game assim que a barra de tarefas existir (na hora, se já existe). Quando ela aparece
+    /// depois do app, traz a tela do console de volta para a frente: a barra também fica sempre visível e,
+    /// chegando por último, cobriria a parte de baixo da tela.
+    /// </summary>
+    private void ReapplyGameModeWhenShellReady()
+    {
+        static bool ShellReady() => Native.NativeMethods.FindWindow("Shell_TrayWnd", null) != IntPtr.Zero;
+
+        if (ShellReady())
+        {
+            Safe(() => _gameMode.ReapplyIfEnabled(interactive: false));
+            return;
+        }
+
+        var giveUpAt = DateTime.UtcNow + ShellWaitLimit;
+        var timer = new System.Windows.Forms.Timer { Interval = 500 };
+        timer.Tick += (_, _) =>
+        {
+            if (!ShellReady() && DateTime.UtcNow < giveUpAt) return;
+            timer.Dispose();
+            Safe(() => _gameMode.ReapplyIfEnabled(interactive: false));
+            if (_console is { IsDisposed: false, Visible: true }) _console.KeepOnTop();
+        };
+        timer.Start();
     }
 
     // ------------------------------------------------------------------
@@ -187,6 +232,22 @@ public sealed class TrayApplicationContext : ApplicationContext
         };
         keyboardItem.Click += (_, _) => Safe(_keyboard.Toggle);
         _menu.Items.Add(keyboardItem);
+
+        // Gravação da tela (o mesmo do cartão da tela do console, do atalho − + A e da tecla de atalho)
+        var recordHotkey = _settings.Current.RecordingHotkey;
+        var recordText = _recorder.IsRecording
+            ? $"Parar gravação ({FormatElapsed(_recorder.Elapsed)})"
+            : "Gravar a tela";
+        var recordItem = new ToolStripMenuItem(string.IsNullOrWhiteSpace(recordHotkey) ? recordText : $"{recordText}\t{recordHotkey}")
+        {
+            Checked = _recorder.IsRecording,
+            ToolTipText = "Grava a tela em que está o jogo, com o som do PC, em MP4. No controle: segure − e A por 1,5 segundo.",
+        };
+        recordItem.Click += (_, _) => ToggleRecording();
+        var recordingsFolder = new ToolStripMenuItem("Abrir pasta das gravações");
+        recordingsFolder.Click += (_, _) => Safe(OpenRecordingsFolder);
+        _menu.Items.Add(recordItem);
+        _menu.Items.Add(recordingsFolder);
 
         _menu.Items.Add(new ToolStripSeparator());
 
@@ -306,6 +367,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             : "Modo Desktop";
         var pads = _controllers.ConnectedCount;
         var text = $"{AppTitle} — {mode}\n{pads} controle(s)";
+        if (_recorder.IsRecording) text += $"\nGravando a tela ({FormatElapsed(_recorder.Elapsed)})";
         // NotifyIcon.Text tem limite de 127 caracteres.
         _tray.Text = text.Length > 127 ? text[..127] : text;
     }
@@ -314,6 +376,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         SyncStartupRegistration();
         RegisterHotkey();
+        RegisterRecordingHotkey();
         SyncControllerFeatures();
         // Se as opções do Modo Game mudaram enquanto ele está ativo, aplica na hora (o usuário está na tela: pode pedir UAC).
         Safe(() => _gameMode.ReapplyIfEnabled(interactive: true));
@@ -329,8 +392,9 @@ public sealed class TrayApplicationContext : ApplicationContext
         if (_console is null || _console.IsDisposed)
         {
             _console = new ConsoleForm(
-                _settings, _steam, _library, _gameMode, _power, _display, _backlight, _controllers, _mouse, _keyboard, _updates,
+                _settings, _steam, _library, _gameMode, _power, _display, _backlight, _controllers, _mouse, _keyboard, _updates, _recorder,
                 openSettings: ShowSettings,
+                toggleRecording: ToggleRecording,
                 launchShortcut: LaunchShortcut,
                 exitApp: ExitApplication,
                 restartElevated: RestartElevated);
@@ -498,6 +562,135 @@ public sealed class TrayApplicationContext : ApplicationContext
             crossed: !on);
     }
 
+    // ------------------------------------------------------------------
+    // Gravação da tela
+    // ------------------------------------------------------------------
+
+    /// <summary>Segundos de contagem antes de gravar.</summary>
+    private const int RecordingCountdownSeconds = 3;
+
+    private System.Windows.Forms.Timer? _countdown;
+    private int _countdownLeft;
+
+    /// <summary>
+    /// Começa ou para a gravação (bandeja, tecla de atalho, − + A no controle, cartão da tela do console). Começar
+    /// passa por uma contagem "3, 2, 1": o aviso diz que a gravação vai começar e some antes do primeiro quadro, então
+    /// não aparece no vídeo. Acionar de novo durante a contagem a cancela.
+    /// </summary>
+    private void ToggleRecording()
+    {
+        if (_countdown is not null)
+        {
+            StopCountdown();
+            ShowRecordingMessage("Gravação cancelada", Theme.PillOff);
+            return;
+        }
+
+        if (_recorder.IsRecording)
+        {
+            Safe(_recorder.Stop); // o aviso de "salva" sai em OnRecordingStateChanged
+            return;
+        }
+
+        _countdownLeft = RecordingCountdownSeconds;
+        ShowCountdown();
+        _countdown = new System.Windows.Forms.Timer { Interval = 1000 };
+        _countdown.Tick += (_, _) =>
+        {
+            if (--_countdownLeft > 0)
+            {
+                ShowCountdown();
+                return;
+            }
+
+            StopCountdown();
+            Safe(_recorder.Start);
+        };
+        _countdown.Start();
+    }
+
+    private void ShowCountdown()
+    {
+        if (_console is { IsDisposed: false, Visible: true })
+        {
+            _console.ShowRecordingCountdown(_countdownLeft);
+        }
+        else
+        {
+            ToastForm.Show($"A gravação da tela começa em {_countdownLeft}", _countdownLeft.ToString(), Theme.Danger, glyphIsText: true);
+        }
+    }
+
+    /// <summary>Para a contagem e tira o aviso da tela na hora.</summary>
+    private void StopCountdown()
+    {
+        _countdown?.Dispose();
+        _countdown = null;
+        ToastForm.CloseCurrent();
+        if (_console is { IsDisposed: false, Visible: true }) _console.ClearNoticeNow();
+    }
+
+    /// <summary>Aviso da gravação: no rodapé da tela do console, se ela estiver aberta, ou no aviso flutuante.</summary>
+    private void ShowRecordingMessage(string text, Color accent)
+    {
+        if (_console is { IsDisposed: false, Visible: true }) return; // a tela do console avisa por conta própria
+        ToastForm.Show(text, Theme.GlyphRecord, accent);
+    }
+
+    /// <summary>
+    /// Ícone da bandeja com a bolinha vermelha enquanto grava e o aviso de gravação salva (ou do erro que a parou).
+    /// </summary>
+    private void OnRecordingStateChanged()
+    {
+        bool recording = _recorder.IsRecording;
+        _tray.Icon = recording ? _recordingIcon ??= CreateRecordingIcon(_appIcon) : _appIcon;
+        UpdateTrayText();
+
+        var file = Path.GetFileName(_recorder.CurrentFile);
+        if (_recorder.LastError is { } error)
+        {
+            _tray.ShowBalloonTip(8000, AppTitle, $"A gravação parou: {error} O que foi gravado até ali ficou em {file}.", ToolTipIcon.Error);
+            return;
+        }
+
+        // O começo não tem aviso: a contagem já avisou, e um aviso agora sairia no vídeo. O fim avisa onde salvou.
+        if (!recording) ShowRecordingMessage($"Gravação salva: {file}", Theme.Success);
+    }
+
+    private void OpenRecordingsFolder()
+    {
+        Directory.CreateDirectory(_recorder.Folder);
+        ProcessLauncher.Start(_recorder.Folder);
+    }
+
+    private void OnPowerModeChanged(object? sender, Microsoft.Win32.PowerModeChangedEventArgs e)
+    {
+        if (e.Mode == Microsoft.Win32.PowerModes.Suspend) _recorder.Stop();
+    }
+
+    internal static string FormatElapsed(TimeSpan t) =>
+        t.TotalHours >= 1 ? t.ToString(@"h\:mm\:ss") : t.ToString(@"m\:ss");
+
+    /// <summary>O ícone do app com uma bolinha vermelha no canto, como o "REC" das câmeras.</summary>
+    private static Icon CreateRecordingIcon(Icon source)
+    {
+        using var bitmap = new Bitmap(32, 32);
+        using (var g = Graphics.FromImage(bitmap))
+        {
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using (var sized = new Icon(source, 32, 32)) g.DrawIcon(sized, new Rectangle(0, 0, 32, 32));
+            using var ring = new SolidBrush(Color.White);
+            using var dot = new SolidBrush(Theme.Danger);
+            g.FillEllipse(ring, 15, 15, 17, 17);
+            g.FillEllipse(dot, 17, 17, 13, 13);
+        }
+
+        var handle = bitmap.GetHicon();
+        var icon = (Icon)Icon.FromHandle(handle).Clone();
+        Native.NativeMethods.DestroyIcon(handle);
+        return icon;
+    }
+
     private void OnControllerComboTriggered(ControllerCombo combo)
     {
         // Com a tela do console aberta, ela mesma trata o controle; os atalhos valem no Windows.
@@ -515,6 +708,10 @@ public sealed class TrayApplicationContext : ApplicationContext
 
             case ControllerCombo.ToggleKeyboard:
                 Safe(_keyboard.Toggle);
+                break;
+
+            case ControllerCombo.ToggleRecording:
+                ToggleRecording(); // o aviso sai em OnRecordingStateChanged
                 break;
         }
     }
@@ -534,6 +731,25 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             _tray.ShowBalloonTip(4000, AppTitle,
                 $"Não foi possível registrar o atalho \"{hotkey}\". Ele pode ser inválido ou estar em uso por outro programa.",
+                ToolTipIcon.Warning);
+        }
+    }
+
+    private void RegisterRecordingHotkey()
+    {
+        var hotkey = _settings.Current.RecordingHotkey;
+        if (string.IsNullOrWhiteSpace(hotkey))
+        {
+            _recordHotkey.Unregister();
+            return;
+        }
+
+        if (string.Equals(hotkey, _recordHotkey.RegisteredHotkey, StringComparison.OrdinalIgnoreCase)) return;
+
+        if (!_recordHotkey.Register(hotkey))
+        {
+            _tray.ShowBalloonTip(4000, AppTitle,
+                $"Não foi possível registrar o atalho de gravação \"{hotkey}\". Ele pode ser inválido ou estar em uso por outro programa.",
                 ToolTipIcon.Warning);
         }
     }
@@ -571,8 +787,12 @@ public sealed class TrayApplicationContext : ApplicationContext
         _updateCheckTimer.Stop();
         _controllerCombo.SetActive([]);
         _mouse.Suspended = true; // solta qualquer botão do mouse que esteja pressionado
+        _countdown?.Dispose();
+        _countdown = null;
+        _recorder.Stop(); // fecha o MP4: sem o índice no fim, o arquivo não abre
         ToastForm.CloseCurrent();
         _hotkey.Dispose();
+        _recordHotkey.Dispose();
         _consoleMode.EnsureShellRestored();
         _tray.Visible = false;
         ExitThread();
@@ -580,6 +800,8 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private void OnAppExit()
     {
+        Microsoft.Win32.SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        _recorder.Stop(); // saída sem passar pelo "Sair" (fim da sessão do Windows)
         _tray.Visible = false;
         _tray.Dispose();
     }
@@ -613,6 +835,9 @@ public sealed class TrayApplicationContext : ApplicationContext
             _mouse.Dispose();
             _controllers.Dispose();
             _hotkey.Dispose();
+            _recordHotkey.Dispose();
+            _recorder.Dispose();
+            _recordingIcon?.Dispose();
             _menu.Dispose();
             _tray.Dispose();
             _settingsForm?.Dispose();

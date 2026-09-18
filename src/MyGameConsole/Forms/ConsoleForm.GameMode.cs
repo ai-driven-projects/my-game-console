@@ -49,6 +49,20 @@ public sealed partial class ConsoleForm
             "dispositivo\" e a de boas-vindas/novidades (o mesmo que desmarcar essas opções em Sistema > Notificações > " +
             "Configurações adicionais).",
             s.GameModeHideSetupPrompts, enabled, real.SetupPromptsHidden, v => SetSetting(x => x.GameModeHideSetupPrompts = v));
+        AutoItem("Entrar direto no console ao ligar o PC",
+            "O app vira a porta de entrada do PC: ao ligar, esta tela abre antes de tudo e cobre a área de trabalho enquanto " +
+            "o Windows termina de carregar, pronta para o controle. Para ela chegar mais cedo, o app tira o atraso que o " +
+            "Windows põe nos apps de inicialização e o de 5 s da tarefa de \"Iniciar como administrador\" (recriar a tarefa " +
+            "pede o UAC uma vez). Desligar devolve os atrasos originais do Windows.",
+            s.GameModeBootToConsole, enabled, real.BootsToConsole, v => SetSetting(x => x.GameModeBootToConsole = v),
+            pendingHint: "Ainda há atraso na inicialização. Se \"Iniciar como administrador\" estiver ligado, desligue e ligue " +
+                         "este ajuste para recriar a tarefa (pede o UAC). A tarefa só é recriada pela cópia do app que ela abre.");
+        AutoItem("Tela de bloqueio com o papel de parede do console",
+            "A tela de bloqueio e a de entrada do Windows mostram a mesma imagem do papel de parede do Modo Game. " +
+            "É um ajuste do computador, por isso gravar pede o UAC uma vez. Enquanto estiver ligado, a imagem fica travada " +
+            "em Personalização > Tela de bloqueio; desligar devolve a escolha a você.",
+            s.GameModeLockScreen, enabled, real.LockScreenApplied, v => SetSetting(x => x.GameModeLockScreen = v),
+            pendingHint: "A tela de bloqueio ainda não está com o papel de parede do console. Desligue e ligue este ajuste (pede o UAC).");
         AutoItem("Iniciar com o Windows",
             "Ligado junto com o Modo Game: sem o app no boot, os ajustes não seriam reaplicados e a tela do console não abriria pelo controle.",
             s.StartWithWindows, enabled, s.StartWithWindows, v => SetSetting(x => x.StartWithWindows = v));

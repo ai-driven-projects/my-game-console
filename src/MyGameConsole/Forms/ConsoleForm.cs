@@ -43,15 +43,17 @@ public sealed partial class ConsoleForm : Form
         public int Scroll { get; set; }
         /// <summary>Altura dos tiles em relação ao tamanho padrão (a fileira de jogos é mais alta).</summary>
         public float Scale { get; init; } = 1f;
-        /// <summary>Botões pequenos de energia no alto da tela, desenhados pelo cabeçalho e não como fileira.</summary>
+        /// <summary>Botão pequeno de atualizações no alto da tela, desenhado pelo cabeçalho e não como fileira.</summary>
         public bool IsTopBar { get; init; }
+        /// <summary>Botões de energia (suspender, reiniciar, desligar, sair) no canto inferior direito.</summary>
+        public bool IsBottomBar { get; init; }
     }
 
     private const float GameCapsuleAspect = 2f / 3f;
-    // Os jogos (capas) são o destaque da tela; embaixo, cartões mais largos que altos com o Big Picture e
-    // as opções do sistema, ocupando até o pé da tela (não há rodapé).
-    private const float GamesRowScale = 1.8f;
-    private const float SystemRowScale = 1.15f;
+    // Os jogos (capas) são o destaque da tela; embaixo, cartões menores que as capas, mais largos que altos, com o
+    // Big Picture e as opções do sistema. Os botões de energia ficam no canto inferior direito.
+    private const float GamesRowScale = 1.73f;
+    private const float SystemRowScale = 0.9f;
     private const float SystemTileAspect = 1.2f;
 
     private const short StickDeadZone = 16000;
@@ -70,13 +72,15 @@ public sealed partial class ConsoleForm : Form
     private readonly ControllerMouseService _mouse;
     private readonly VirtualKeyboardService _keyboard;
     private readonly UpdateService _updates;
+    private readonly ScreenRecorderService _recorder;
     private readonly Action _openSettings;
+    private readonly Action _toggleRecording;
     private readonly Action<AppShortcut> _launchShortcut;
     private readonly Action _exitApp;
     private readonly Action _restartElevated;
 
     private readonly List<Row> _rows = [];
-    private int _row = 1; // 0 é a barra de energia no alto; começa na fileira de jogos
+    private int _row = 1; // 0 é o botão de atualizações no alto; começa na fileira de jogos
     private int _col;
 
     private readonly System.Windows.Forms.Timer _inputTimer = new() { Interval = 40 };
@@ -118,7 +122,9 @@ public sealed partial class ConsoleForm : Form
         ControllerMouseService mouse,
         VirtualKeyboardService keyboard,
         UpdateService updates,
+        ScreenRecorderService recorder,
         Action openSettings,
+        Action toggleRecording,
         Action<AppShortcut> launchShortcut,
         Action exitApp,
         Action restartElevated)
@@ -134,7 +140,9 @@ public sealed partial class ConsoleForm : Form
         _mouse = mouse;
         _keyboard = keyboard;
         _updates = updates;
+        _recorder = recorder;
         _openSettings = openSettings;
+        _toggleRecording = toggleRecording;
         _launchShortcut = launchShortcut;
         _exitApp = exitApp;
         _restartElevated = restartElevated;
@@ -151,9 +159,11 @@ public sealed partial class ConsoleForm : Form
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
 
         _inputTimer.Tick += (_, _) => PollController();
-        _clockTimer.Tick += (_, _) => Invalidate();
+        _clockTimer.Tick += (_, _) => OnClockTick();
         // Progresso do download e mudanças de estado da atualização aparecem no botão da barra do alto.
         _updates.StateChanged += (_, _) => { if (Visible) Invalidate(); };
+        // Com esta tela aberta, o aviso de começo e fim da gravação sai aqui (e não no flutuante).
+        _recorder.StateChanged += (_, _) => { if (Visible) ShowRecordingNotice(); };
     }
 
     // ------------------------------------------------------------------
@@ -163,7 +173,8 @@ public sealed partial class ConsoleForm : Form
     /// <summary>Mostra (ou traz para frente) a tela do console em tela cheia no monitor principal.</summary>
     public void ShowLauncher()
     {
-        if (_row == 0) (_row, _col) = (1, 0); // não reabrir com "Desligar" selecionado
+        // não reabrir com "Desligar" (ou as atualizações) selecionado
+        if (_row == 0 || (_row < _rows.Count && _rows[_row].IsBottomBar)) (_row, _col) = (1, 0);
         BuildTiles();
         _confirmText = null;
         _confirmAction = null;
@@ -175,12 +186,52 @@ public sealed partial class ConsoleForm : Form
         var screen = Screen.PrimaryScreen ?? Screen.AllScreens[0];
         Bounds = screen.Bounds;
 
+        _handingOffToSteam = false;
         if (!Visible) Show();
         TopMost = true;
         Activate();
         BringToFront();
         NativeMethods.SetForegroundWindow(Handle);
+
+        // O Big Picture aberto por trás vai para a barra de tarefas: sai do caminho do controle, e o cartão
+        // "Steam Big Picture" o traz de volta.
+        try { _steam.MinimizeBigPicture(); }
+        catch { /* sem Steam ou sem a janela: nada a minimizar */ }
+
         Invalidate();
+    }
+
+    /// <summary>
+    /// Verdadeiro enquanto esta tela entrega a frente ao Steam de propósito (cartão do Big Picture, abrir um jogo):
+    /// nesse meio tempo o Big Picture pode aparecer sem ser minimizado de volta.
+    /// </summary>
+    private bool _handingOffToSteam;
+
+    /// <summary>
+    /// A cada segundo: redesenha (relógio, baterias) e, com esta tela aberta, devolve o Big Picture para a barra de
+    /// tarefas se ele tomou a frente sozinho — o Steam também lê o controle, e um botão apertado aqui podia
+    /// trazê-lo para a frente no meio da navegação.
+    /// </summary>
+    private void OnClockTick()
+    {
+        if (Visible && !_handingOffToSteam && _steam.IsBigPictureInForeground)
+        {
+            _steam.MinimizeBigPicture();
+            KeepOnTop();
+        }
+
+        Invalidate();
+    }
+
+    /// <summary>
+    /// Volta para a frente de tudo sem mexer na navegação (ex.: no boot, quando a barra de tarefas aparece
+    /// depois desta tela e ficaria por cima dela).
+    /// </summary>
+    public void KeepOnTop()
+    {
+        TopMost = true;
+        BringToFront();
+        NativeMethods.SetForegroundWindow(Handle);
     }
 
     protected override void OnVisibleChanged(EventArgs e)
@@ -218,6 +269,7 @@ public sealed partial class ConsoleForm : Form
             _inputTimer.Dispose();
             _clockTimer.Dispose();
             _steamIcon?.Dispose();
+            foreach (var icon in _icons.Values) icon.Dispose();
             _art.Dispose();
         }
 
@@ -235,8 +287,10 @@ public sealed partial class ConsoleForm : Form
         var selectedTitle = CurrentTile?.Title;
         _rows.Clear();
 
-        var power = new Row { Title = "Energia", IsTopBar = true };
-        power.Tiles.Add(new Tile
+        // No alto, ao lado do relógio e das baterias: só as atualizações. Os botões de energia ficam no canto
+        // inferior direito, como a última fileira da navegação (abaixo dos cartões).
+        var top = new Row { Title = "Atualizações", IsTopBar = true };
+        top.Tiles.Add(new Tile
         {
             Glyph = Theme.GlyphDownload,
             Title = "Atualizações",
@@ -246,6 +300,8 @@ public sealed partial class ConsoleForm : Form
             Progress = () => _updates.State == UpdateState.Downloading ? _updates.Progress : null,
             OnSelect = () => _ = RunUpdateFlowAsync(),
         });
+
+        var power = new Row { Title = "Energia", IsBottomBar = true };
         power.Tiles.Add(new Tile
         {
             Glyph = Theme.GlyphMoon,
@@ -320,6 +376,7 @@ public sealed partial class ConsoleForm : Form
         system.Tiles.Add(new Tile
         {
             Glyph = Theme.GlyphGame,
+            Image = CardIcon(ConsoleIcon.GameMode),
             Title = "Modo Game",
             Aspect = SystemTileAspect,
             Subtitle = "Checklist do que o app aplica (barra, ícones, papel de parede, senha ao acordar) e do que falta fazer à mão.",
@@ -329,6 +386,7 @@ public sealed partial class ConsoleForm : Form
         system.Tiles.Add(new Tile
         {
             Glyph = Theme.GlyphController,
+            Image = CardIcon(ConsoleIcon.Controller),
             Title = "Controle",
             Aspect = SystemTileAspect,
             Subtitle = "Mapa dos atalhos do controle, mouse pelo analógico e teclado virtual, com o desenho do controle.",
@@ -337,7 +395,19 @@ public sealed partial class ConsoleForm : Form
         });
         system.Tiles.Add(new Tile
         {
+            Glyph = Theme.GlyphRecord,
+            Image = CardIcon(ConsoleIcon.Record),
+            Title = "Gravar a tela",
+            Aspect = SystemTileAspect,
+            Subtitle = "Grava a tela com o som do PC, em MP4, depois de uma contagem de 3 s. A começa ou para; " +
+                       "também dá com − + A no controle ou com a tecla de atalho.",
+            IsOn = () => _recorder.IsRecording,
+            OnSelect = ToggleRecordingFromConsole,
+        });
+        system.Tiles.Add(new Tile
+        {
             Glyph = Theme.GlyphHome,
+            Image = CardIcon(ConsoleIcon.Desktop),
             Title = "Área de trabalho",
             Aspect = SystemTileAspect,
             Subtitle = "Fecha esta tela e volta ao Windows.",
@@ -346,15 +416,17 @@ public sealed partial class ConsoleForm : Form
         system.Tiles.Add(new Tile
         {
             Glyph = Theme.GlyphSettings,
+            Image = CardIcon(ConsoleIcon.Settings),
             Title = "Configurações",
             Aspect = SystemTileAspect,
             Subtitle = "Opções do app, Modo Game, controle e atalhos, tudo pelo controle.",
             OnSelect = OpenSettingsPage,
         });
 
-        _rows.Add(power);
+        _rows.Add(top);
         if (games.Tiles.Count > 0) _rows.Add(games); // sem jogos nem atalhos, a fileira some (e a 1 vira o Sistema)
         _rows.Add(system);
+        _rows.Add(power);
 
         _row = Math.Clamp(_row, 0, _rows.Count - 1);
         _col = Math.Clamp(_col, 0, _rows[_row].Tiles.Count - 1);
@@ -405,6 +477,7 @@ public sealed partial class ConsoleForm : Form
         try
         {
             ShowNotice($"Abrindo {game.Name}...");
+            _handingOffToSteam = true; // o Steam pode mostrar o Big Picture antes do jogo
             _library.Launch(game);
 
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
@@ -422,6 +495,49 @@ public sealed partial class ConsoleForm : Form
         {
             ShowNotice(ex.Message, isError: true);
         }
+    }
+
+    /// <summary>
+    /// Começa a contagem para gravar (a tela continua aberta: daqui se escolhe o jogo) ou para a gravação em
+    /// andamento. A contagem "3, 2, 1" aparece no aviso desta tela e sai antes do primeiro quadro.
+    /// </summary>
+    private void ToggleRecordingFromConsole() => _toggleRecording();
+
+    /// <summary>Contagem antes de gravar, no aviso desta tela (chamado pela bandeja, que controla a contagem).</summary>
+    public void ShowRecordingCountdown(int seconds) => ShowNotice($"A gravação da tela começa em {seconds}...");
+
+    /// <summary>Tira o aviso da tela na hora (redesenhando já), para ele não entrar no primeiro quadro gravado.</summary>
+    public void ClearNoticeNow()
+    {
+        _notice = null;
+        Invalidate();
+        Update();
+    }
+
+    /// <summary>
+    /// Avisos da gravação nesta tela. O começo não tem aviso (ele sairia no vídeo): a contagem já avisou e o
+    /// cartão "Gravar a tela" fica LIGADO.
+    /// </summary>
+    private void ShowRecordingNotice()
+    {
+        var file = Path.GetFileName(_recorder.CurrentFile);
+        if (_recorder.LastError is { } error) ShowNotice($"A gravação parou: {error}", isError: true);
+        else if (!_recorder.IsRecording) ShowNotice($"Gravação salva: {file}");
+        else Invalidate();
+    }
+
+    private readonly Dictionary<ConsoleIcon, Bitmap> _icons = [];
+
+    /// <summary>Ícone dos cartões de baixo no estilo do logo da Steam, desenhado uma vez e guardado.</summary>
+    private Bitmap CardIcon(ConsoleIcon icon)
+    {
+        if (!_icons.TryGetValue(icon, out var bitmap))
+        {
+            bitmap = ConsoleIcons.Render(icon, 256);
+            _icons[icon] = bitmap;
+        }
+
+        return bitmap;
     }
 
     private Bitmap? _steamIcon;
@@ -463,6 +579,7 @@ public sealed partial class ConsoleForm : Form
         try
         {
             if (!_steam.IsBigPictureActive) ShowNotice("Abrindo o Steam Big Picture...");
+            _handingOffToSteam = true;
             var focused = await _steam.OpenBigPictureAsync();
             if (!Visible) return; // o usuário fechou esta tela enquanto esperava
             Hide();
@@ -883,6 +1000,7 @@ public sealed partial class ConsoleForm : Form
         else
         {
             DrawRows(g, w, h); // sem rodapé: o espaço vai para os cartões de baixo
+            DrawPowerBar(g, w, h);
         }
 
         DrawVersion(g, w, h);
@@ -929,9 +1047,9 @@ public sealed partial class ConsoleForm : Form
     }
 
     /// <summary>
-    /// Cabeçalho numa linha só, tudo centrado no mesmo eixo: à esquerda o controle e o nome do app; à direita
-    /// o relógio e (na tela inicial) os botões de energia. Embaixo, à direita, o status ou o nome do botão
-    /// de energia selecionado.
+    /// Cabeçalho numa linha só, tudo centrado no mesmo eixo: à esquerda o controle e o nome do app; à direita,
+    /// da direita para a esquerda, o botão de atualizações, o relógio e as baterias (de cada controle e do
+    /// notebook). Embaixo, à direita, a data e o status do Steam.
     /// </summary>
     private void DrawHeader(Graphics g, int w, int h)
     {
@@ -950,115 +1068,215 @@ public sealed partial class ConsoleForm : Form
         DrawInkCentered(g, "MY GAME CONSOLE", "Segoe UI", FontStyle.Bold, u * 2.3f, textBrush, brandRight + u * 1.5f, cy);
 
         var topBar = _rows.FirstOrDefault(r => r.IsTopBar);
-        bool showPower = !_settingsOpen && topBar is not null;
-        float clockRight = w - mx;
+        float right = w - mx;
 
         if (topBar is not null)
         {
             foreach (var t in topBar.Tiles) t.Bounds = RectangleF.Empty;
         }
 
-        if (showPower)
+        if (!_settingsOpen && topBar is { Tiles.Count: > 0 })
         {
             float d = barH;
             float gap = u * 1.1f;
-            // Atualizações (o primeiro) fica um pouco afastado do grupo do Windows (energia e sair).
-            float groupGap = u * 2.4f;
-            int count = topBar!.Tiles.Count;
-            float x = w - mx - count * d - (count - 1) * gap - (count > 1 ? groupGap - gap : 0f);
+            int count = topBar.Tiles.Count;
+            float groupWidth = count * d + (count - 1) * gap;
+            float x = right - groupWidth;
             bool barActive = _rows[_row] == topBar;
-            using var badgeBrush = new SolidBrush(Theme.Success);
-            using var badgeRing = new Pen(Theme.BgTop, u * 0.3f);
-            using var progressPen = new Pen(Theme.Accent, u * 0.35f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
-            using var trackPen = new Pen(Color.FromArgb(60, Theme.Accent), u * 0.35f);
-
-            using var fill = new SolidBrush(Color.FromArgb(170, Theme.Tile));
-            using var darkBrush = new SolidBrush(Theme.BgTop);
-            using var glowBrush = new SolidBrush(Color.FromArgb(70, Theme.Accent));
-            using var ringPen = new Pen(Color.FromArgb(60, Theme.Muted), u * 0.12f);
-
-            // divisória entre o relógio e os botões
-            using (var sepPen = new Pen(Color.FromArgb(70, Theme.Muted), u * 0.12f))
-            {
-                float sx = x - u * 2.2f;
-                g.DrawLine(sepPen, sx, cy - u * 1.7f, sx, cy + u * 1.7f);
-                clockRight = sx - u * 2.2f;
-            }
-
             for (int i = 0; i < count; i++)
             {
-                var t = topBar.Tiles[i];
-                bool selected = barActive && i == _col;
                 var rect = new RectangleF(x, cy - d / 2f, d, d);
-                x += d + (i == 0 ? groupGap : gap);
-                t.Bounds = rect;
-
-                if (selected)
-                {
-                    var glow = rect;
-                    glow.Inflate(u * 0.6f, u * 0.6f);
-                    g.FillEllipse(glowBrush, glow);
-                    g.FillEllipse(accentBrush, rect);
-                }
-                else
-                {
-                    g.FillEllipse(fill, rect);
-                    g.DrawEllipse(ringPen, rect);
-                }
-
-                // Centrado pela tinta: cada glifo da fonte de ícones fica numa posição diferente dentro da
-                // própria caixa (o X, por exemplo, sai deslocado se centrado pela caixa).
-                DrawInkCenteredIn(g, t.Glyph, Theme.IconFontName, d * 0.36f, selected ? darkBrush : mutedBrush, rect);
-
-                // download em andamento: anel de progresso em volta do botão
-                if (t.Progress?.Invoke() is { } progress)
-                {
-                    var ring = rect;
-                    ring.Inflate(u * 0.55f, u * 0.55f);
-                    g.DrawEllipse(trackPen, ring);
-                    float sweep = (float)Math.Clamp(progress, 0d, 1d) * 360f;
-                    if (sweep > 0.5f) g.DrawArc(progressPen, ring, -90f, sweep);
-                }
-
-                // novidade (ex.: versão nova): bolinha no canto superior direito
-                if (t.Badge?.Invoke() == true)
-                {
-                    float bd = d * 0.3f;
-                    var dot = new RectangleF(rect.Right - bd * 0.85f, rect.Top - bd * 0.15f, bd, bd);
-                    g.FillEllipse(badgeBrush, dot);
-                    g.DrawEllipse(badgeRing, dot);
-                }
+                topBar.Tiles[i].Bounds = rect;
+                DrawRoundButton(g, topBar.Tiles[i], rect, barActive && i == _col, u);
+                x += d + gap;
             }
+
+            // divisória entre o relógio e o botão
+            using var sepPen = new Pen(Color.FromArgb(70, Theme.Muted), u * 0.12f);
+            float sx = right - groupWidth - u * 2.2f;
+            g.DrawLine(sepPen, sx, cy - u * 1.7f, sx, cy + u * 1.7f);
+            right = sx - u * 2.2f;
         }
 
         // relógio
         var now = DateTime.Now;
-        DrawInkCentered(g, now.ToString("HH:mm"), "Segoe UI Light", FontStyle.Regular, u * 4.4f, textBrush, clockRight, cy, alignRight: true);
+        right = DrawInkCentered(g, now.ToString("HH:mm"), "Segoe UI Light", FontStyle.Regular, u * 4.4f, textBrush, right, cy, alignRight: true);
 
-        // linha de baixo: status (o nome do botão selecionado vai para o rodapé, como qualquer item)
+        // baterias: a do notebook e a de cada controle, à esquerda do relógio
+        right -= u * 3f;
+        using var chipFont = new Font("Segoe UI", u * 1.8f, GraphicsUnit.Pixel);
+        var power = SystemInformation.PowerStatus;
+        if ((power.BatteryChargeStatus & BatteryChargeStatus.NoSystemBattery) == 0 && power.BatteryLifePercent is >= 0f and <= 1f)
+        {
+            int percent = (int)Math.Round(power.BatteryLifePercent * 100);
+            bool charging = power.PowerLineStatus == PowerLineStatus.Online;
+            right = DrawBatteryChip(g, chipFont, right, cy, u, GlyphLaptop, percent, charging ? "carregando" : null);
+        }
+
+        foreach (var battery in _controllers.ReadBatteries().Reverse())
+        {
+            string? note = battery.Wired ? "com fio" : null;
+            right = DrawBatteryChip(g, chipFont, right, cy, u, Theme.GlyphGame, battery.Percent, note);
+        }
+
+        // linha de baixo: data e status do Steam
         using var statusFont = new Font("Segoe UI", u * 1.8f, GraphicsUnit.Pixel);
         float statusY = barTop + barH + u * 1.3f;
 
-        var pads = _controllers.ConnectedCount switch
-        {
-            0 => "Nenhum controle",
-            1 => "1 controle",
-            var n => $"{n} controles",
-        };
         var steam = !_steam.IsInstalled ? "Steam ausente"
             : _steam.IsBigPictureActive ? "Big Picture ativo"
             : _steam.IsRunning ? "Steam aberto"
             : "Steam fechado";
-        var status = $"{now:dddd, d 'de' MMMM}   ·   {pads}   ·   {steam}";
+        var status = $"{now:dddd, d 'de' MMMM}   ·   {steam}";
         var statusSize = g.MeasureString(status, statusFont);
         g.DrawString(status, statusFont, mutedBrush, w - mx - statusSize.Width, statusY);
+    }
+
+    /// <summary>Notebook (bateria do PC) na fonte de ícones do sistema.</summary>
+    private const string GlyphLaptop = "";
+
+    /// <summary>
+    /// Um item de bateria terminando em <paramref name="right"/>: ícone do aparelho, pilha com o nível (verde, amarelo
+    /// ou vermelho) e a porcentagem, com <paramref name="note"/> ao lado ("com fio", "carregando"). Sem porcentagem
+    /// (controle que não informa), só o ícone e a nota. Devolve onde o próximo item (à esquerda) termina.
+    /// </summary>
+    private static float DrawBatteryChip(Graphics g, Font font, float right, float cy, float u, string glyph, int? percent, string? note)
+    {
+        using var mutedBrush = new SolidBrush(Theme.Muted);
+        using var textBrush = new SolidBrush(Theme.Text);
+
+        string text = percent is { } p ? (note is null ? $"{p}%" : $"{p}%  {note}") : note ?? string.Empty;
+        float x = right;
+        if (text.Length > 0)
+        {
+            var size = g.MeasureString(text, font);
+            x = right - size.Width;
+            g.DrawString(text, font, textBrush, x, cy - size.Height / 2f);
+        }
+
+        if (percent is { } level)
+        {
+            // pilha: corpo com contorno, polo à direita e o preenchimento do nível
+            float bw = u * 2.8f, bh = u * 1.4f;
+            var body = new RectangleF(x - u * 0.6f - bw - u * 0.3f, cy - bh / 2f, bw, bh);
+            using (var outline = new Pen(Theme.Muted, u * 0.16f))
+            using (var path = Shapes.RoundedRect(body, u * 0.3f))
+            {
+                g.DrawPath(outline, path);
+            }
+            using (var nub = new SolidBrush(Theme.Muted))
+            {
+                g.FillRectangle(nub, body.Right + u * 0.05f, cy - bh * 0.22f, u * 0.25f, bh * 0.44f);
+            }
+
+            var color = level > 50 ? Theme.Success : level > 20 ? Theme.Warning : Theme.Danger;
+            var fillRect = RectangleF.Inflate(body, -u * 0.28f, -u * 0.28f);
+            fillRect.Width *= Math.Clamp(level, 4, 100) / 100f;
+            using (var fill = new SolidBrush(color))
+            {
+                g.FillRectangle(fill, fillRect);
+            }
+            x = body.X;
+        }
+
+        float left = DrawInkCentered(g, glyph, Theme.IconFontName, FontStyle.Regular, u * 2.4f, mutedBrush, x - u * 0.8f, cy, alignRight: true);
+        return left - u * 3f;
+    }
+
+    /// <summary>Botão redondo de ícone (atualizações no alto, energia embaixo), com anel de progresso e marca de novidade.</summary>
+    private static void DrawRoundButton(Graphics g, Tile t, RectangleF rect, bool selected, float u)
+    {
+        float d = rect.Width;
+        using var accentBrush = new SolidBrush(Theme.Accent);
+        using var mutedBrush = new SolidBrush(Theme.Muted);
+        using var darkBrush = new SolidBrush(Theme.BgTop);
+
+        if (selected)
+        {
+            var glow = rect;
+            glow.Inflate(u * 0.6f, u * 0.6f);
+            using var glowBrush = new SolidBrush(Color.FromArgb(70, Theme.Accent));
+            g.FillEllipse(glowBrush, glow);
+            g.FillEllipse(accentBrush, rect);
+        }
+        else
+        {
+            using var fill = new SolidBrush(Color.FromArgb(170, Theme.Tile));
+            using var ringPen = new Pen(Color.FromArgb(60, Theme.Muted), u * 0.12f);
+            g.FillEllipse(fill, rect);
+            g.DrawEllipse(ringPen, rect);
+        }
+
+        // Centrado pela tinta: cada glifo da fonte de ícones fica numa posição diferente dentro da
+        // própria caixa (o X, por exemplo, sai deslocado se centrado pela caixa).
+        DrawInkCenteredIn(g, t.Glyph, Theme.IconFontName, d * 0.36f, selected ? darkBrush : mutedBrush, rect);
+
+        // download em andamento: anel de progresso em volta do botão
+        if (t.Progress?.Invoke() is { } progress)
+        {
+            var ring = rect;
+            ring.Inflate(u * 0.55f, u * 0.55f);
+            using var trackPen = new Pen(Color.FromArgb(60, Theme.Accent), u * 0.35f);
+            using var progressPen = new Pen(Theme.Accent, u * 0.35f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            g.DrawEllipse(trackPen, ring);
+            float sweep = (float)Math.Clamp(progress, 0d, 1d) * 360f;
+            if (sweep > 0.5f) g.DrawArc(progressPen, ring, -90f, sweep);
+        }
+
+        // novidade (ex.: versão nova): bolinha no canto superior direito
+        if (t.Badge?.Invoke() == true)
+        {
+            float bd = d * 0.3f;
+            var dot = new RectangleF(rect.Right - bd * 0.85f, rect.Top - bd * 0.15f, bd, bd);
+            using var badgeBrush = new SolidBrush(Theme.Success);
+            using var badgeRing = new Pen(Theme.BgTop, u * 0.3f);
+            g.FillEllipse(badgeBrush, dot);
+            g.DrawEllipse(badgeRing, dot);
+        }
+    }
+
+    /// <summary>
+    /// Botões de energia no canto inferior direito. O nome do selecionado aparece à esquerda deles (os ícones
+    /// sozinhos não dizem se é reiniciar ou desligar).
+    /// </summary>
+    private void DrawPowerBar(Graphics g, int w, int h)
+    {
+        var bar = _rows.FirstOrDefault(r => r.IsBottomBar);
+        if (bar is null) return;
+
+        float u = h / 100f;
+        float mx = w * 0.06f;
+        float d = u * 5f;
+        float gap = u * 1.1f;
+        float cy = h - u * 5.2f;
+        int count = bar.Tiles.Count;
+        float groupLeft = w - mx - count * d - (count - 1) * gap;
+        float x = groupLeft;
+        bool active = _rows[_row] == bar;
+
+        for (int i = 0; i < count; i++)
+        {
+            var rect = new RectangleF(x, cy - d / 2f, d, d);
+            bar.Tiles[i].Bounds = rect;
+            DrawRoundButton(g, bar.Tiles[i], rect, active && i == _col, u);
+            x += d + gap;
+        }
+
+        if (active && CurrentTile is { } selected)
+        {
+            using var font = new Font("Segoe UI", u * 2.1f, FontStyle.Bold, GraphicsUnit.Pixel);
+            using var brush = new SolidBrush(Theme.Text);
+            var size = g.MeasureString(selected.Title, font);
+            g.DrawString(selected.Title, font, brush, groupLeft - u * 2f - size.Width, cy - size.Height / 2f);
+        }
     }
 
     /// <summary>
     /// Desenha o texto com o centro vertical da tinta em <paramref name="cy"/>. O <c>DrawString</c> centra a
     /// caixa da linha, que inclui espaço para acentos e descendentes, e por isso cada fonte (a de ícones, a do
     /// texto, a do relógio) ficava numa altura diferente. Começa em <paramref name="x"/> (ou termina nele,
-    /// com <paramref name="alignRight"/>) e devolve a borda direita do desenho.
+    /// com <paramref name="alignRight"/>) e devolve a borda livre do desenho: a direita, ou a esquerda com
+    /// <paramref name="alignRight"/>.
     /// </summary>
     private static float DrawInkCentered(Graphics g, string text, string family, FontStyle style, float emPixels,
         Brush brush, float x, float cy, bool alignRight = false)
@@ -1080,29 +1298,12 @@ public sealed partial class ConsoleForm : Form
         }
 
         g.FillPath(brush, path);
-        return left + ink.Width;
+        return alignRight ? left : left + ink.Width;
     }
 
     /// <summary>Desenha o texto (ex.: um glifo) com o centro da tinta no centro de <paramref name="rect"/>, nos dois eixos.</summary>
     private static void DrawInkCenteredIn(Graphics g, string text, string family, float emPixels, Brush brush, RectangleF rect)
-    {
-        using var path = new GraphicsPath();
-        using (var ff = new FontFamily(family))
-        {
-            path.AddString(text, ff, (int)FontStyle.Regular, emPixels, PointF.Empty, StringFormat.GenericTypographic);
-        }
-
-        var ink = path.GetBounds();
-        if (ink.IsEmpty) return;
-
-        using (var m = new Matrix())
-        {
-            m.Translate(rect.X + rect.Width / 2f - (ink.X + ink.Width / 2f), rect.Y + rect.Height / 2f - (ink.Y + ink.Height / 2f));
-            path.Transform(m);
-        }
-
-        g.FillPath(brush, path);
-    }
+        => InkText.DrawCentered(g, text, family, FontStyle.Regular, emPixels, brush, rect);
 
     private void DrawRows(Graphics g, int w, int h)
     {
@@ -1126,11 +1327,15 @@ public sealed partial class ConsoleForm : Form
         for (int r = 0; r < _rows.Count; r++)
         {
             var row = _rows[r];
-            if (row.IsTopBar) continue;
+            if (row.IsTopBar || row.IsBottomBar) continue;
 
             bool activeRow = r == _row;
             float th = baseTile * row.Scale;
-            var widths = row.Tiles.Select(t => th * t.Aspect).ToArray();
+            // Como no Big Picture: o jogo selecionado troca a capa vertical pela arte horizontal (header), na mesma
+            // altura. Sem header (ou atalho sem arte), fica com a proporção da capa.
+            var widths = row.Tiles
+                .Select((t, i) => th * (activeRow && i == _col && t.Game?.HeaderPath is not null ? GameArtCache.HeaderAspect : t.Aspect))
+                .ToArray();
 
             // Fileira de tiles menores (Sistema): nomes e ícones proporcionalmente menores.
             float fontScale = row.Scale < 1f ? 0.88f : 1f;
@@ -1194,7 +1399,9 @@ public sealed partial class ConsoleForm : Form
                 bool capsule = t.Aspect < 1f;
                 using var path = RoundedRect(rect, u * 1.8f);
 
-                var art = t.Game is { } game ? _art.Capsule(game, Size.Round(baseRect.Size)) : null;
+                var art = t.Game is not { } game ? null
+                    : selected && game.HeaderPath is not null ? _art.Header(game, Size.Round(baseRect.Size))
+                    : _art.Capsule(game, Size.Round(baseRect.Size));
                 if (art is not null)
                 {
                     // Pincel de textura em vez de recorte: bordas arredondadas suavizadas.
@@ -1288,7 +1495,10 @@ public sealed partial class ConsoleForm : Form
         if (rect.Right > w - mx * 0.5f) rect.X = w - mx * 0.5f - rect.Width;
     }
 
-    /// <summary>Versão do app, discreta, no canto inferior direito (abaixo dos cartões). Avisa quando há versão nova.</summary>
+    /// <summary>
+    /// Versão do app, discreta, num canto de baixo: na tela inicial à esquerda (à direita ficam os botões de energia),
+    /// nas páginas à direita. Avisa quando há versão nova.
+    /// </summary>
     private void DrawVersion(Graphics g, int w, int h)
     {
         float u = h / 100f;
@@ -1299,7 +1509,8 @@ public sealed partial class ConsoleForm : Form
         using var font = new Font("Segoe UI", u * 1.5f, GraphicsUnit.Pixel);
         using var brush = new SolidBrush(_updates.Available is null ? Color.FromArgb(110, Theme.Muted) : Theme.Accent);
         var size = g.MeasureString(text, font);
-        g.DrawString(text, font, brush, w - u * 2f - size.Width, h - u * 1.2f - size.Height);
+        float x = _settingsOpen ? w - u * 2f - size.Width : u * 2f;
+        g.DrawString(text, font, brush, x, h - u * 1.2f - size.Height);
     }
 
     private static float DrawHint(Graphics g, Font font, float x, float y, string button, string label, float u)

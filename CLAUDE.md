@@ -27,6 +27,14 @@ Se `dotnet` não estiver no PATH da sessão, use `C:\Program Files\dotnet\dotnet
 - Ajustes que exigem administrador (ex.: senha ao acordar, `PowerService`) só pedem UAC em ação do usuário
   (`ReapplyIfEnabled(interactive: true)`); no início do app (`interactive: false`) ficam pendentes no checklist.
   O UAC é obtido relançando o próprio exe elevado com `--wake-password` (tratado em `Program.cs`).
+- A tela de bloqueio do Modo Game (`LockScreenService`) grava `HKLM\...\PersonalizationCSP` (administrador:
+  relança o exe elevado com `--lock-screen`, como a senha ao acordar) e aponta para uma cópia em JPEG em
+  `%ProgramData%\MyGameConsole\lockscreen.jpg`: a tela de bloqueio é desenhada pelo sistema, que não lê o perfil.
+- "Entrar direto no console" (Modo Game): o `TrayApplicationContext` abre a tela do console antes de todo o resto
+  no início e só reaplica o Modo Game quando a barra de tarefas (`Shell_TrayWnd`) existe, trazendo a tela de volta
+  para a frente. A tarefa agendada não tem mais atraso no logon; `StartupService.RemoveTaskDelay` só recria a
+  tarefa se ela abre este mesmo exe. Cuidado ao testar pela cópia de `bin\Debug`: "Iniciar com o Windows" aponta
+  a tarefa/Run para o exe que está rodando.
 - O que o app não consegue fazer sozinho (login automático, que exige a senha) vira item "para fazer à mão"
   no checklist, com o estado lido do Windows e a tela certa aberta com A.
 - A tela do console (`Forms/ConsoleForm.cs`) é 100% desenhada em `OnPaint` e precisa continuar navegável
@@ -44,7 +52,27 @@ Se `dotnet` não estiver no PATH da sessão, use `C:\Program Files\dotnet\dotnet
 - Biblioteca do Steam: `SteamLibraryService` lê os arquivos locais do Steam (parser VDF texto em `App/Vdf.cs`) e
   `App/GameArtCache.cs` guarda as capas já redimensionadas e o fundo do jogo já composto (não redimensionar arte
   a cada repintura). As artes ficam em três formatos de pasta no `librarycache`, conforme a versão do Steam: ver
-  `FindArt`. Na tela do console, a fileira 0 é a barra de energia (`Row.IsTopBar`), desenhada pelo cabeçalho.
+  `FindArt`. Na tela do console, a fileira 0 é o botão de atualizações (`Row.IsTopBar`), desenhado pelo cabeçalho
+  junto com o relógio e as baterias (controles: XInput ou a bateria Bluetooth que o Windows guarda no nó
+  `BTHLE`/`BTHENUM` do aparelho, ver `BluetoothBattery`); a última é a de energia (`Row.IsBottomBar`), no canto
+  inferior direito. As capas dos jogos são o destaque: os cartões do sistema ficam sempre menores que elas.
+  Com a tela do console aberta, o Big Picture fica minimizado (`SteamService.MinimizeBigPicture`): o Steam também lê
+  o controle e tomava a frente sozinho. Se ele aparecer sem ter sido pedido (cartão do Big Picture ou abrir um jogo,
+  que marcam `_handingOffToSteam`), volta a ser minimizado no timer do relógio.
+- Os ícones dos cartões de baixo da tela do console ficam em `App/ConsoleIcons.cs`: badge redondo com o degradê
+  do logo da Steam e símbolo branco sólido, vetorial (GraphicsPath). Um cartão novo ganha um ícone lá, no
+  mesmo estilo, para continuar coerente com o logo da Steam ao lado.
+- Gravação da tela: `ScreenRecorderService` + `Services/Recording/` (Desktop Duplication → textura, loopback do
+  WASAPI → PCM 48 kHz, `Mp4Writer` com o Sink Writer do Media Foundation), tudo numa thread só, alinhado pelo QPC.
+  As interfaces COM (DXGI, D3D11, MF, WASAPI) são chamadas pela vtable em `Native/NativeMethods.Media.cs`, sem RCW,
+  para liberar texturas e amostras a cada quadro; os números dos slots seguem a ordem dos cabeçalhos do SDK
+  (contando os 3 do IUnknown) — conferir antes de acrescentar um método. O encoder recebe a textura direto
+  (`OnGpu`) e cai no caminho pela memória se o driver recusar o primeiro quadro. Perder a duplicação (tela
+  bloqueada ou apagada, UAC, troca de resolução) não para a gravação: repete a última imagem até voltar. Janelas
+  do app que não devem sair no vídeo usam `WDA_EXCLUDEFROMCAPTURE` (ver `ToastForm`). Começar sempre passa pela
+  contagem "3, 2, 1" do `TrayApplicationContext.ToggleRecording` (na tela do console, se aberta; senão no aviso
+  flutuante), que some antes do primeiro quadro; o começo em si não tem aviso. Sair do app e suspender
+  chamam `Stop`, que fecha o MP4 (sem o `Finalize` o arquivo não abre).
 - O desenho do controle fica em `App/GamepadArt.cs`, sem depender do formulário: dá para renderizá-lo em um
   PNG por um projeto de teste separado para conferir a arte sem abrir o app.
 

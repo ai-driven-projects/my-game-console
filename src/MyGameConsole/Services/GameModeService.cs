@@ -8,7 +8,9 @@ public sealed record GameModeStatus(
     bool? DesktopIconsHidden,
     bool? WallpaperApplied,
     bool? WakePasswordSkipped,
-    bool? SetupPromptsHidden);
+    bool? SetupPromptsHidden,
+    bool? BootsToConsole,
+    bool? LockScreenApplied);
 
 /// <summary>
 /// "Modo Game": conjunto de ajustes de área de trabalho que ficam aplicados de forma persistente
@@ -21,13 +23,21 @@ public sealed class GameModeService
     private readonly SettingsService _settings;
     private readonly DesktopTweaksService _tweaks;
     private readonly PowerService _power;
+    private readonly StartupService _startup;
+    private readonly LockScreenService _lockScreen;
 
-    public GameModeService(SettingsService settings, DesktopTweaksService tweaks, PowerService power)
+    public GameModeService(SettingsService settings, DesktopTweaksService tweaks, PowerService power,
+        StartupService startup, LockScreenService lockScreen)
     {
         _settings = settings;
         _tweaks = tweaks;
         _power = power;
+        _startup = startup;
+        _lockScreen = lockScreen;
     }
+
+    /// <summary>O app abre direto na tela do console ao iniciar (Modo Game com "Entrar direto no console").</summary>
+    public bool BootsToConsole => IsEnabled && _settings.Current.GameModeBootToConsole;
 
     public bool IsEnabled => _settings.Current.GameModeEnabled;
 
@@ -105,7 +115,9 @@ public sealed class GameModeService
         DesktopIconsHidden: SafeRead(() => _tweaks.AreDesktopIconsHidden),
         WallpaperApplied: SafeRead(IsWallpaperApplied),
         WakePasswordSkipped: SafeRead(() => !_power.IsWakePasswordRequiredAnywhere()),
-        SetupPromptsHidden: SafeRead(() => _tweaks.AreSetupPromptsDisabled));
+        SetupPromptsHidden: SafeRead(() => _tweaks.AreSetupPromptsDisabled),
+        BootsToConsole: SafeRead(() => _tweaks.IsStartupDelayDisabled && !_startup.IsTaskDelayed),
+        LockScreenApplied: SafeRead(() => _lockScreen.IsApplied));
 
     private static bool? SafeRead(Func<bool> read)
     {
@@ -149,6 +161,8 @@ public sealed class GameModeService
             DesktopIconsHidden = _tweaks.AreDesktopIconsHidden,
             WakePasswordByScheme = TryReadWakePassword(),
             SetupPrompts = _tweaks.GetSetupPrompts(),
+            StartupDelay = _tweaks.GetStartupDelay(),
+            LockScreen = TryReadLockScreen(),
         };
     }
 
@@ -219,10 +233,73 @@ public sealed class GameModeService
             else if (backup?.SetupPrompts is { } values) _tweaks.RestoreSetupPrompts(values);
         });
 
+        Try(errors, "entrar direto no console", () =>
+        {
+            // Backups de versões antigas não têm o valor original: guarda agora, antes de mexer.
+            if (backup is not null && backup.StartupDelay is null)
+            {
+                var original = _tweaks.GetStartupDelay();
+                _settings.Update(_ => backup.StartupDelay = original);
+            }
+
+            if (s.GameModeBootToConsole)
+            {
+                _tweaks.SetStartupDelayDisabled();
+                // A tarefa elevada de versões antigas espera 5 s no logon; recriá-la pede o UAC (só em ação do usuário).
+                if (s.StartElevated) _startup.RemoveTaskDelay(allowElevation: interactive);
+            }
+            else if (backup?.StartupDelay is { } values)
+            {
+                _tweaks.RestoreStartupDelay(values);
+            }
+        });
+
+        Try(errors, "tela de bloqueio", () =>
+        {
+            // Backups de versões antigas (ou cuja leitura falhou) não têm o valor original: guarda agora, antes de mexer.
+            if (backup is not null && backup.LockScreen is null)
+            {
+                var original = _lockScreen.Get();
+                _settings.Update(_ => backup.LockScreen = original);
+            }
+
+            // Gravar exige administrador (UAC). Se não for permitido agora, fica pendente no checklist.
+            if (s.GameModeLockScreen) _lockScreen.Apply(LockScreenImage(s), allowElevation: interactive);
+            else if (backup?.LockScreen is { } values) _lockScreen.Restore(values, allowElevation: interactive);
+        });
+
         if (errors.Count > 0)
         {
             throw new InvalidOperationException("Modo Game aplicado com problemas: " + string.Join("; ", errors));
         }
+    }
+
+    /// <summary>Nulo se o Windows recusar a leitura; a aplicação tenta de novo antes de mexer no ajuste.</summary>
+    private Dictionary<string, string?>? TryReadLockScreen()
+    {
+        try { return _lockScreen.Get(); }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Imagem para a tela de bloqueio: a mesma do papel de parede do Modo Game. A escolhida pelo usuário vai direto;
+    /// o papel de parede padrão (WebP, que o GDI+ não lê) vai pela cópia em JPEG que o próprio Windows guarda do
+    /// papel de parede atual; sem ela, a arte gerada pelo app.
+    /// </summary>
+    private string LockScreenImage(AppSettings s)
+    {
+        var custom = s.GameModeWallpaperPath;
+        if (!string.IsNullOrWhiteSpace(custom) && File.Exists(custom)
+            && Path.GetExtension(custom).ToLowerInvariant() is ".jpg" or ".jpeg" or ".png" or ".bmp")
+        {
+            return custom;
+        }
+
+        var transcoded = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "Windows", "Themes", "TranscodedWallpaper");
+        if (SafeRead(IsWallpaperApplied) == true && File.Exists(transcoded)) return transcoded;
+
+        return _tweaks.EnsureFallbackWallpaper(_settings.Directory);
     }
 
     private void Restore(DesktopStateSnapshot backup)
@@ -239,6 +316,14 @@ public sealed class GameModeService
         Try(errors, "tela de concluir a configuração", () =>
         {
             if (backup.SetupPrompts is { } values) _tweaks.RestoreSetupPrompts(values);
+        });
+        Try(errors, "entrar direto no console", () =>
+        {
+            if (backup.StartupDelay is { } values) _tweaks.RestoreStartupDelay(values);
+        });
+        Try(errors, "tela de bloqueio", () =>
+        {
+            if (backup.LockScreen is { } values) _lockScreen.Restore(values, allowElevation: true);
         });
 
         if (errors.Count > 0)

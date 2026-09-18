@@ -10,9 +10,11 @@ esconder a área de trabalho, reagir à conexão de controles, atalhos rápidos 
 - **Tela do console** (`Ctrl+Alt+G` por padrão, configurável, ou segurando **− e +** / Back + Start no
   controle por meio segundo): launcher em tela cheia estilo PlayStation / Big Picture, navegável só com o
   controle (D-pad/analógico, A seleciona, B volta), teclado ou mouse.
-  Em cima, só os jogos, em destaque; embaixo, em cartões, Steam Big Picture, Modo Game, Controle, área de
-  trabalho e configurações. No alto, ao lado do relógio (▲ a partir dos jogos), ficam botões redondos:
-  atualizações e, separados, suspender, reiniciar, desligar e sair do app (estes pedem confirmação na tela).
+  Em cima, só os jogos, em destaque; embaixo, em cartões menores, Steam Big Picture, Modo Game, Controle,
+  gravação da tela, área de trabalho e configurações. No alto ficam a bateria de cada controle (XInput ou a
+  que o Windows mostra para o controle Bluetooth), a do notebook, o relógio e o botão de atualizações (▲ a
+  partir dos jogos). No canto inferior direito (▼ a partir dos cartões), botões redondos para suspender,
+  reiniciar, desligar e sair do app (estes pedem confirmação na tela).
 - **Biblioteca de jogos do Steam**: a fileira "Jogos" mostra os jogos instalados com a capa vertical, do jogado
   mais recentemente para o mais antigo, e o fundo da tela troca para a arte do jogo selecionado, com a última vez
   jogado e as horas de jogo. A abre o jogo direto (pelo Steam, sem passar pelo Big Picture). Tudo vem dos arquivos
@@ -27,7 +29,11 @@ esconder a área de trabalho, reagir à conexão de controles, atalhos rápidos 
   uma imagem sua (se o Windows não tiver o decodificador WebP, o app gera uma arte própria como reserva),
   e entrada sem senha ao acordar da suspensão (o mesmo que "Nunca" em Contas > Opções de entrada, aplicado
   em todos os planos de energia; Win+L continua pedindo senha; gravar pede o UAC uma vez) e sem a tela cheia
-  "Vamos concluir a configuração do seu dispositivo" nem a de boas-vindas após atualizações. O estado anterior
+  "Vamos concluir a configuração do seu dispositivo" nem a de boas-vindas após atualizações. Também faz o PC
+  **entrar direto no console**: ao ligar, a tela do console abre antes de tudo e cobre a área de trabalho
+  enquanto o Windows termina de carregar, sem o atraso que o Windows põe nos apps de inicialização nem o da
+  tarefa de administrador; e a **tela de bloqueio** passa a usar o papel de parede do console (ajuste do
+  computador em `PersonalizationCSP`, pede o UAC uma vez). O estado anterior
   é guardado e restaurado ao desativar; ao ligar o PC, o app reaplica tudo (ativar o Modo Game também liga
   "Iniciar com o Windows"). O tile "Modo Game" da tela do console abre um checklist: o estado real de cada
   ajuste no Windows (aplicado, pendente, desligado) e os passos que só você pode fazer, como o login
@@ -56,7 +62,14 @@ esconder a área de trabalho, reagir à conexão de controles, atalhos rápidos 
   para digitar com o cursor movido pelo analógico.
 - **Atalhos no controle** (valem em qualquer janela, inclusive com um jogo na frente): segure por meio segundo
   **− e +** (Back + Start) para abrir a tela do console, **X + A** para ligar/desligar o mouse pelo analógico e
-  **Y + B** para mostrar/esconder o teclado virtual. Cada um pode ser desligado na tela "Controle".
+  **Y + B** para mostrar/esconder o teclado virtual. e **− + A** para começar/parar a gravação da tela. Cada um pode ser desligado na tela "Controle".
+- **Gravação da tela**: grava o monitor em que está o jogo, com o som do PC, em MP4 (H.264 + AAC), sem
+  programa extra: imagem pela Desktop Duplication do Windows, som pelo loopback do WASAPI e codificação pelo
+  Media Foundation, que usa o encoder da placa de vídeo quando ele existe. Começa e para pelo cartão "Gravar a
+  tela" da tela do console (que continua aberta, para escolher o jogo), pelo menu da bandeja, por **− + A** no
+  controle ou por **Ctrl+Alt+R**. Antes de começar há uma contagem "3, 2, 1", que some antes do primeiro quadro
+  (acionar de novo durante a contagem cancela); nenhum aviso aparece no vídeo. Arquivos em `VídeosMy Game Console` (a pasta, os quadros por segundo
+  — 30 ou 60 — e o som são configuráveis). Suspender o PC ou sair do app fecha o arquivo antes.
 - **Atalhos personalizados**: lista de jogos/launchers/apps no menu (ex.: Playnite, Epic, emuladores).
 - **Energia**: suspender, hibernar, reiniciar e desligar (com confirmação). Na tela do console, "Suspender"
   oferece duas opções: suspender o PC (padrão) ou o **repouso de console**: apaga só a tela e, em notebooks
@@ -73,8 +86,9 @@ esconder a área de trabalho, reagir à conexão de controles, atalhos rápidos 
   Havendo versão nova, a confirmação mostra as notas da versão (roláveis com ▲▼) e, com o seu sim, baixa o MSI, confere o SHA-256 publicado e executa o instalador, que fecha o app,
   atualiza e o reabre. Nada é baixado nem instalado sem confirmação.
 - **Configurações** persistidas em `%LocalAppData%\MyGameConsole\settings.json`.
-- Início silencioso: o app vai direto para a bandeja, sem balão de boas-vindas. Instância única (uma segunda
-  execução encerra em silêncio).
+- Por padrão o app inicia com o Windows e abre direto a tela do console, em tela cheia, pronta para o controle
+  (as duas opções podem ser desligadas nas configurações). Sem balão de boas-vindas. Instância única (uma
+  segunda execução encerra em silêncio).
 
 ## Requisitos
 
@@ -114,7 +128,7 @@ O que o instalador faz:
   Windows não consegue pedir para fechá-lo).
 - Ao desinstalar, remove a entrada em `HKCU\...\Run` e a tarefa agendada `MyGameConsole` criadas por
   "Iniciar com o Windows". As configurações em `%LocalAppData%\MyGameConsole` são mantidas, e os
-  ajustes do Modo Game (barra, ícones, papel de parede, senha ao acordar, tela de configuração) devem ser desativados no app antes de desinstalar.
+  ajustes do Modo Game (barra, ícones, papel de parede, senha ao acordar, tela de configuração, atrasos de inicialização, tela de bloqueio) devem ser desativados no app antes de desinstalar.
 - Atualizações: instalar um MSI de versão maior substitui a anterior mantendo inicialização e configurações.
 
 O MSI e o executável não são assinados. Com o **Smart App Control** ligado (Windows 11), o Windows pode
@@ -177,8 +191,9 @@ src/MyGameConsole/
 ├── Forms/UpdateForm.cs           # janela de atualização (notas da release, download, instalar)
 ├── Models/AppSettings.cs         # modelo das configurações (JSON)
 ├── Models/GamepadState.cs        # estado normalizado de controle (botões/analógicos)
-├── Models/ControllerCombo.cs     # catálogo dos atalhos do controle (− e +, X + A, Y + B)
+├── Models/ControllerCombo.cs     # catálogo dos atalhos do controle (− e +, X + A, Y + B, − + A)
 ├── Native/NativeMethods.cs       # P/Invoke (user32, powrprof, XInput, hid, cfgmgr32)
+├── Native/NativeMethods.Media.cs # DXGI, Direct3D 11, Media Foundation e WASAPI (COM pela vtable)
 ├── Services/
 │   ├── SettingsService.cs        # carregar/salvar settings.json
 │   ├── SteamService.cs           # localizar Steam, Big Picture
@@ -193,6 +208,8 @@ src/MyGameConsole/
 │   ├── DesktopTweaksService.cs   # barra auto-ocultar, ícones, papel de parede
 │   ├── GameModeService.cs        # Modo Game persistente (backup/restauração)
 │   ├── HotkeyService.cs          # tecla de atalho global
+│   ├── ScreenRecorderService.cs  # gravação da tela em MP4 (thread, sincronia de som e imagem)
+│   ├── Recording/                # Desktop Duplication, loopback de áudio (WASAPI) e MP4 (Media Foundation)
 │   ├── LogonService.cs           # lê se o login automático (netplwiz) está ligado
 │   ├── PowerService.cs           # suspender/hibernar/reiniciar/desligar e senha ao acordar (por plano de energia)
 │   ├── StartupService.cs         # iniciar com o Windows

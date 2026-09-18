@@ -10,9 +10,6 @@ namespace MyGameConsole.Services;
 /// </summary>
 public sealed class ControllerComboService : IDisposable
 {
-    /// <summary>Tempo que a combinação precisa ficar segurada para disparar.</summary>
-    public static readonly TimeSpan HoldDuration = TimeSpan.FromMilliseconds(500);
-
     private sealed class Watch(ControllerCombo combo)
     {
         public ControllerCombo Combo { get; } = combo;
@@ -76,7 +73,7 @@ public sealed class ControllerComboService : IDisposable
             }
 
             watch.HeldSince ??= now;
-            if (watch.Fired || now - watch.HeldSince.Value < HoldDuration) continue;
+            if (watch.Fired || now - watch.HeldSince.Value < watch.Combo.Hold) continue;
 
             watch.Fired = true;
             (fired ??= []).Add(watch.Combo);

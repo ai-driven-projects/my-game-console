@@ -37,6 +37,29 @@ public sealed class GameArtCache : IDisposable
         return bitmap;
     }
 
+    /// <summary>
+    /// Proporção da arte horizontal do Steam (header.jpg / library_header, 460×215): é a que o Big Picture mostra no
+    /// jogo selecionado, na mesma altura das capas verticais dos outros.
+    /// </summary>
+    public const float HeaderAspect = 460f / 215f;
+
+    /// <summary>
+    /// Arte horizontal do jogo selecionado no tamanho pedido, ou null sem header no cache. Só uma fica guardada:
+    /// o selecionado muda a todo momento.
+    /// </summary>
+    public Bitmap? Header(SteamGame game, Size size)
+    {
+        if (size.Width <= 0 || size.Height <= 0) return null;
+        if (_header is { } hit && hit.AppId == game.AppId && hit.Size == size) return hit.Image;
+
+        _header?.Image?.Dispose();
+        var image = Load(game.HeaderPath) is { } source ? Cover(source, size) : null;
+        _header = (game.AppId, size, image);
+        return image;
+    }
+
+    private (int AppId, Size Size, Bitmap? Image)? _header;
+
     /// <summary>Fundo em tela cheia com a arte panorâmica do jogo, ou null se ele não tiver uma.</summary>
     public Bitmap? Backdrop(SteamGame game, Size screen)
     {
@@ -69,6 +92,8 @@ public sealed class GameArtCache : IDisposable
     public void Dispose()
     {
         ClearCapsules();
+        _header?.Image?.Dispose();
+        _header = null;
         foreach (var b in _backdrops) b.Image.Dispose();
         _backdrops.Clear();
     }

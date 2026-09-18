@@ -110,7 +110,7 @@ public sealed partial class ConsoleForm
         {
             var c = combo;
             Toggle($"{c.ButtonsText}   ·   {c.Title}",
-                $"Segure {c.ButtonsText} por meio segundo, em qualquer janela do Windows: {c.Title.ToLowerInvariant()}. " +
+                $"Segure {c.ButtonsText} por {c.HoldText}, em qualquer janela do Windows: {c.Title.ToLowerInvariant()}. " +
                 "O app lê o controle direto, então o atalho funciona até com um jogo em primeiro plano — e é por isso " +
                 "que ele pode atrapalhar em jogos que usem esses botões juntos. Nesse caso, desligue o atalho aqui.",
                 () => c.IsEnabledIn(_settings.Current),

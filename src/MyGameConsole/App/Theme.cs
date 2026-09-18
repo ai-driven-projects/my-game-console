@@ -33,6 +33,8 @@ public static class Theme
     public const string GlyphRefresh = "";
     public const string GlyphPower = "";
     public const string GlyphClose = "";
+    /// <summary>Gravar (bolinha): avisos de começo e fim da gravação da tela.</summary>
+    public const string GlyphRecord = "";
     /// <summary>Download: o botão de atualizações na barra do alto da tela do console.</summary>
     public const string GlyphDownload = "";
 

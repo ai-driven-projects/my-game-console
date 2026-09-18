@@ -29,3 +29,6 @@ public readonly record struct GamepadState(
     short ThumbLY,
     short ThumbRX = 0,
     short ThumbRY = 0);
+
+/// <summary>Bateria de um controle: porcentagem (nula quando o controle não informa) ou ligado por cabo.</summary>
+public readonly record struct ControllerBattery(int? Percent, bool Wired);

@@ -56,6 +56,27 @@ public sealed class StartupService
 
     public bool TaskExists => QueryTaskXml() is not null;
 
+    /// <summary>
+    /// A tarefa elevada existe e ainda espera alguns segundos depois do logon (criada por versões antigas do app,
+    /// que usavam &lt;Delay&gt;PT5S&lt;/Delay&gt;).
+    /// </summary>
+    public bool IsTaskDelayed =>
+        QueryTaskXml() is { } xml && xml.Contains("<Delay>", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Recria a tarefa elevada sem o atraso no logon. Recriar exige administrador: sem elevação e sem
+    /// <paramref name="allowElevation"/>, não faz nada e devolve falso (fica pendente no checklist).
+    /// </summary>
+    public bool RemoveTaskDelay(bool allowElevation)
+    {
+        if (!IsTaskDelayed) return true;
+        // Só mexe na tarefa deste executável: outra cópia do app (instalada ou de desenvolvimento) cuida da sua.
+        if (!IsTaskEnabled) return false;
+        if (!allowElevation && !IsProcessElevated) return false;
+        CreateTask();
+        return true;
+    }
+
     public bool IsEnabled => IsRunKeyEnabled || IsTaskEnabled;
 
     /// <summary>
@@ -201,6 +222,8 @@ public sealed class StartupService
         var dir = SecurityElement.Escape(Path.GetDirectoryName(ExePath) ?? string.Empty);
         var userXml = SecurityElement.Escape(user);
 
+        // Sem atraso no gatilho de logon: o app abre a tela do console antes de a área de trabalho terminar de
+        // carregar (o ícone da bandeja volta sozinho quando a barra de tarefas aparece).
         // Ajustes importantes para um app de bandeja em notebook: sem limite de tempo de execução
         // (o padrão do schtasks mata a tarefa após 72 h) e sem restrições de bateria.
         return $"""
@@ -213,7 +236,6 @@ public sealed class StartupService
                 <LogonTrigger>
                   <Enabled>true</Enabled>
                   <UserId>{userXml}</UserId>
-                  <Delay>PT5S</Delay>
                 </LogonTrigger>
               </Triggers>
               <Principals>

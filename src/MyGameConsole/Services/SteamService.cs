@@ -164,6 +164,29 @@ public sealed class SteamService
         return false;
     }
 
+    /// <summary>Janela do Big Picture em primeiro plano agora (o Steam também lê o controle e pode tomar a frente).</summary>
+    public bool IsBigPictureInForeground
+    {
+        get
+        {
+            var foreground = NativeMethods.GetForegroundWindow();
+            return foreground != IntPtr.Zero && foreground == FindBigPictureWindow();
+        }
+    }
+
+    /// <summary>
+    /// Minimiza o Big Picture sem ativar outra janela. Com a tela do console aberta, ele fica fora do caminho: um
+    /// botão do controle não o traz para a frente por acaso. O cartão "Steam Big Picture" o restaura.
+    /// </summary>
+    public void MinimizeBigPicture()
+    {
+        var hwnd = FindBigPictureWindow();
+        if (hwnd != IntPtr.Zero && !NativeMethods.IsIconic(hwnd))
+        {
+            NativeMethods.ShowWindow(hwnd, NativeMethods.SW_SHOWMINNOACTIVE);
+        }
+    }
+
     public void CloseBigPicture()
     {
         if (!IsBigPictureActive) return;

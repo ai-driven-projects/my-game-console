@@ -18,6 +18,12 @@ internal static class Program
             {
                 return Services.PowerService.RunWakePasswordCommand(args[i + 1]);
             }
+
+            // "--lock-screen <spec>": o mesmo, para gravar a imagem da tela de bloqueio (HKLM).
+            if (string.Equals(args[i], Services.LockScreenService.LockScreenArgument, StringComparison.OrdinalIgnoreCase))
+            {
+                return Services.LockScreenService.RunCommand(args[i + 1]);
+            }
         }
 
         // "--wait-for-pid N": usado ao reiniciar como administrador; espera a instância antiga sair

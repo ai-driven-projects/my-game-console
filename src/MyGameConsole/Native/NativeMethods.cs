@@ -88,6 +88,7 @@ internal static partial class NativeMethods
     internal const int SW_HIDE = 0;
     internal const int SW_SHOW = 5;
     internal const int SW_RESTORE = 9;
+    internal const int SW_SHOWMINNOACTIVE = 7;
 
     internal const uint WM_COMMAND = 0x0111;
     internal const uint WM_HOTKEY = 0x0312;
@@ -228,6 +229,22 @@ internal static partial class NativeMethods
 
     [LibraryImport("xinput1_4.dll", EntryPoint = "XInputGetState")]
     internal static partial uint XInputGetState(uint dwUserIndex, out XInputState pState);
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct XInputBatteryInformation
+    {
+        public byte BatteryType;
+        public byte BatteryLevel;
+    }
+
+    internal const byte BATTERY_DEVTYPE_GAMEPAD = 0;
+    internal const byte BATTERY_TYPE_DISCONNECTED = 0;
+    internal const byte BATTERY_TYPE_WIRED = 1;
+    internal const byte BATTERY_TYPE_UNKNOWN = 0xFF;
+
+    /// <summary>Nível da bateria de um controle XInput, de 0 (vazia) a 3 (cheia).</summary>
+    [LibraryImport("xinput1_4.dll", EntryPoint = "XInputGetBatteryInformation")]
+    internal static partial uint XInputGetBatteryInformation(uint dwUserIndex, byte devType, out XInputBatteryInformation information);
 
     // ---------- energia da tela (user32 / kernel32) ----------
 
@@ -397,6 +414,34 @@ internal static partial class NativeMethods
 
     [LibraryImport("cfgmgr32.dll", EntryPoint = "CM_Get_Device_Interface_ListW")]
     internal static unsafe partial int CM_Get_Device_Interface_List(in Guid interfaceClassGuid, IntPtr deviceId, char* buffer, uint bufferLength, uint flags);
+
+    // Propriedades de dispositivo (ex.: a bateria que o Windows mostra em Configurações > Bluetooth).
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct DevPropKey
+    {
+        public Guid FmtId;
+        public uint Pid;
+    }
+
+    /// <summary>DEVPKEY_Bluetooth_Battery: porcentagem (BYTE) de aparelhos Bluetooth que informam a bateria.</summary>
+    internal static readonly DevPropKey DEVPKEY_Bluetooth_Battery = new() { FmtId = new Guid("104ea319-6ee2-4701-bd47-8ddbf425bbe5"), Pid = 2 };
+
+    internal const uint CM_GETIDLIST_FILTER_ENUMERATOR = 0x1;
+    internal const uint CM_LOCATE_DEVNODE_NORMAL = 0;
+    internal const uint DEVPROP_TYPE_BYTE = 0x3;
+
+    [LibraryImport("cfgmgr32.dll", EntryPoint = "CM_Get_Device_ID_List_SizeW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int CM_Get_Device_ID_List_Size(out uint length, string? filter, uint flags);
+
+    [LibraryImport("cfgmgr32.dll", EntryPoint = "CM_Get_Device_ID_ListW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static unsafe partial int CM_Get_Device_ID_List(string? filter, char* buffer, uint bufferLength, uint flags);
+
+    [LibraryImport("cfgmgr32.dll", EntryPoint = "CM_Locate_DevNodeW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int CM_Locate_DevNode(out uint devInst, string deviceId, uint flags);
+
+    [LibraryImport("cfgmgr32.dll", EntryPoint = "CM_Get_DevNode_PropertyW")]
+    internal static unsafe partial int CM_Get_DevNode_Property(uint devInst, in DevPropKey key, out uint type, byte* buffer, ref uint size, uint flags);
 
     [LibraryImport("hid.dll", EntryPoint = "HidD_GetHidGuid")]
     internal static partial void HidD_GetHidGuid(out Guid hidGuid);
